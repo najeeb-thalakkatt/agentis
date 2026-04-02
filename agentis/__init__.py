@@ -16,6 +16,11 @@ from agentis.compaction.dedup import DedupResult, FileDeduplicator
 from agentis.hooks.registry import HookRegistry
 from agentis.runtime.agent import AgentRuntime, StepResult
 from agentis.runtime.session import Session
+from agentis.agents.fork import ForkAgent
+from agentis.agents.teammate import TeammateAgent
+from agentis.agents.worktree import WorktreeAgent
+from agentis.agents.isolation import NoIsolation, TempDirIsolation
+from agentis.agents.mailbox import FileMailbox, InMemoryMailbox
 
 from agentis.errors import (
     AgentisError,
@@ -105,6 +110,14 @@ __all__ = [
     "AgentRuntime",
     "Session",
     "StepResult",
+    # Agents
+    "ForkAgent",
+    "TeammateAgent",
+    "WorktreeAgent",
+    "TempDirIsolation",
+    "NoIsolation",
+    "InMemoryMailbox",
+    "FileMailbox",
     # Errors
     "AgentisError",
     "CompactionError",
