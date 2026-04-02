@@ -78,6 +78,7 @@ class AgentRuntime:
         max_tokens: int = 0,
         approval_callback: Callable[[ApprovalRequest], Awaitable[bool]] | None = None,
         extensions: list[Extension] | None = None,
+        skeptical: bool = True,
     ) -> None:
         self._provider = provider
         self._utility_provider = utility_provider
@@ -85,6 +86,7 @@ class AgentRuntime:
         self._max_turns = max_turns
         self._approval_callback = approval_callback
         self._extensions = extensions or []
+        self._skeptical = skeptical
 
         # Memory
         self._memory = memory or MemoryIndex()
@@ -240,6 +242,7 @@ class AgentRuntime:
             max_turns=self._max_turns,
             approval_callback=self._approval_callback,
             extensions=self._extensions,
+            skeptical=self._skeptical,
         )
         forked._session = self._session.fork()
         return forked
@@ -248,11 +251,20 @@ class AgentRuntime:
 
     def _assemble_context(self) -> list[Message]:
         """Build the full message list for the LLM call."""
+        from agentis.memory.skeptical import SkepticalMemory
+
         messages: list[Message] = []
 
         # System prompt
         if self._system_prompt:
             messages.append(Message(role="system", content=self._system_prompt))
+
+        # Skeptical memory prompt (Pattern 5)
+        if self._skeptical:
+            messages.append(Message(
+                role="system",
+                content=SkepticalMemory.VERIFICATION_PROMPT,
+            ))
 
         # Memory index
         memory_msg = self._memory.get_context_payload()
