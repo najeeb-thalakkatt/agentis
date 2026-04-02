@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from agentis.memory.index import MemoryIndex, MemoryPointer
 from agentis.memory.recall_tool import RecallTool
+from agentis.tools.base import FunctionTool
+from agentis.tools.decorator import tool
+from agentis.tools.orchestrator import ToolOrchestrator
+from agentis.providers.base import BaseProvider
+from agentis.providers.anthropic import AnthropicProvider
+from agentis.providers.openai import OpenAIProvider
+from agentis.providers.openai_compatible import OpenAICompatibleProvider
 
 from agentis.errors import (
     AgentisError,
@@ -73,6 +80,15 @@ __all__ = [
     "ProviderCapabilities",
     "Tool",
     "ToolSchema",
+    # Tools
+    "FunctionTool",
+    "ToolOrchestrator",
+    "tool",
+    # Providers
+    "BaseProvider",
+    "AnthropicProvider",
+    "OpenAIProvider",
+    "OpenAICompatibleProvider",
     # Errors
     "AgentisError",
     "CompactionError",
