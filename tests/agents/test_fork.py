@@ -7,11 +7,10 @@ from collections.abc import AsyncIterator
 import pytest
 
 from agentis.agents.fork import ForkAgent
-from agentis.protocols import ProviderCapabilities, ToolSchema
+from agentis.protocols import ProviderCapabilities
 from agentis.runtime.agent import AgentRuntime
 from agentis.tools.decorator import tool
 from agentis.types import (
-    Message,
     Permission,
     ProviderResponse,
     TokenUsage,

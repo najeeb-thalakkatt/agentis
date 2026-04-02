@@ -56,12 +56,19 @@ class FileMailbox:
     """
 
     def __init__(self, base_dir: str | Path = ".agentis/mailbox") -> None:
-        self._base_dir = Path(base_dir)
+        self._base_dir = Path(base_dir).resolve()
         os.makedirs(self._base_dir, exist_ok=True)
+
+    def _safe_agent_dir(self, agent_name: str) -> Path:
+        """Resolve agent directory, preventing path traversal."""
+        agent_dir = (self._base_dir / agent_name).resolve()
+        if not str(agent_dir).startswith(str(self._base_dir)):
+            raise ValueError(f"Invalid agent name (path traversal): {agent_name}")
+        return agent_dir
 
     async def send(self, to: str, message: dict[str, Any]) -> None:
         """Send a message to an agent's mailbox directory."""
-        agent_dir = self._base_dir / to
+        agent_dir = self._safe_agent_dir(to)
         os.makedirs(agent_dir, exist_ok=True)
 
         # Use timestamp-based filename for ordering
@@ -73,7 +80,7 @@ class FileMailbox:
 
     async def receive(self, agent_name: str) -> list[dict[str, Any]]:
         """Receive and consume all pending messages."""
-        agent_dir = self._base_dir / agent_name
+        agent_dir = self._safe_agent_dir(agent_name)
         if not agent_dir.exists():
             return []
 
@@ -92,7 +99,7 @@ class FileMailbox:
 
     async def peek(self, agent_name: str) -> list[dict[str, Any]]:
         """Peek at pending messages without consuming them."""
-        agent_dir = self._base_dir / agent_name
+        agent_dir = self._safe_agent_dir(agent_name)
         if not agent_dir.exists():
             return []
 
@@ -110,7 +117,7 @@ class FileMailbox:
 
     async def clear(self, agent_name: str) -> None:
         """Clear all messages for an agent."""
-        agent_dir = self._base_dir / agent_name
+        agent_dir = self._safe_agent_dir(agent_name)
         if not agent_dir.exists():
             return
 

@@ -118,7 +118,7 @@ class TestSkepticalRuntimeIntegration:
     async def test_runtime_includes_skeptical_prompt(self) -> None:
         from collections.abc import AsyncIterator
 
-        from agentis.protocols import ProviderCapabilities, ToolSchema
+        from agentis.protocols import ProviderCapabilities
         from agentis.runtime.agent import AgentRuntime
         from agentis.types import Message, ProviderResponse, TokenUsage
 

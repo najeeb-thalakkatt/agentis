@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from agentis.compaction.compactor import ContextCompactor
@@ -20,19 +20,16 @@ from agentis.compaction.dedup import FileDeduplicator
 from agentis.hooks.registry import HookRegistry
 from agentis.memory.index import MemoryIndex
 from agentis.memory.recall_tool import RecallTool
+from agentis.memory.skeptical import SkepticalMemory
 from agentis.runtime.session import Session
 from agentis.tools.orchestrator import ToolOrchestrator
 from agentis.types import (
     ApprovalRequest,
-    ContextEntry,
     HookAction,
     HookContext,
     LifecycleEvent,
     Message,
-    Permission,
-    Priority,
     ProviderResponse,
-    TokenUsage,
     ToolCall,
     ToolResult,
 )
@@ -193,7 +190,7 @@ class AgentRuntime:
         # Notify extensions
         await self._notify_extensions_turn_end(response)
 
-        is_final = len(response.tool_calls) == 0
+        is_final = not response.tool_calls
         return StepResult(
             response=response,
             tool_results=tool_results,
@@ -251,8 +248,6 @@ class AgentRuntime:
 
     def _assemble_context(self) -> list[Message]:
         """Build the full message list for the LLM call."""
-        from agentis.memory.skeptical import SkepticalMemory
-
         messages: list[Message] = []
 
         # System prompt
@@ -316,7 +311,7 @@ class AgentRuntime:
         return StepResult(
             response=response,
             tool_results=tool_results,
-            is_final=len(response.tool_calls) == 0,
+            is_final=not response.tool_calls,
             turn_number=self._session.turn_count,
         )
 
@@ -433,4 +428,5 @@ class AgentRuntime:
             try:
                 await ext.on_turn_end(self, response)
             except Exception as e:
-                logger.warning("Extension '%s' on_turn_end failed: %s", getattr(ext, 'name', '?'), e)
+                ext_name = getattr(ext, "name", "?")
+                logger.warning("Extension '%s' on_turn_end failed: %s", ext_name, e)

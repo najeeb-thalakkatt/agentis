@@ -8,9 +8,9 @@ import pytest
 
 from agentis.agents.mailbox import InMemoryMailbox
 from agentis.agents.teammate import TeammateAgent
-from agentis.protocols import ProviderCapabilities, ToolSchema
+from agentis.protocols import ProviderCapabilities
 from agentis.runtime.agent import AgentRuntime
-from agentis.types import Message, ProviderResponse, TokenUsage
+from agentis.types import ProviderResponse, TokenUsage
 
 
 class MockProvider:

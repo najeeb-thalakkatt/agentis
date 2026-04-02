@@ -2,28 +2,13 @@
 
 from __future__ import annotations
 
-from agentis.memory.index import MemoryIndex, MemoryPointer
-from agentis.memory.recall_tool import RecallTool
-from agentis.tools.base import FunctionTool
-from agentis.tools.decorator import tool
-from agentis.tools.orchestrator import ToolOrchestrator
-from agentis.providers.base import BaseProvider
-from agentis.providers.anthropic import AnthropicProvider
-from agentis.providers.openai import OpenAIProvider
-from agentis.providers.openai_compatible import OpenAICompatibleProvider
-from agentis.compaction.compactor import CompactionResult, ContextCompactor
-from agentis.compaction.dedup import DedupResult, FileDeduplicator
-from agentis.hooks.registry import HookRegistry
-from agentis.runtime.agent import AgentRuntime, StepResult
-from agentis.runtime.session import Session
 from agentis.agents.fork import ForkAgent
-from agentis.agents.teammate import TeammateAgent
-from agentis.agents.worktree import WorktreeAgent
 from agentis.agents.isolation import NoIsolation, TempDirIsolation
 from agentis.agents.mailbox import FileMailbox, InMemoryMailbox
-from agentis.extensions.dream import DreamExtension
-from agentis.extensions.cost_tracker import CostTracker
-
+from agentis.agents.teammate import TeammateAgent
+from agentis.agents.worktree import WorktreeAgent
+from agentis.compaction.compactor import CompactionResult, ContextCompactor
+from agentis.compaction.dedup import DedupResult, FileDeduplicator
 from agentis.errors import (
     AgentisError,
     CompactionError,
@@ -33,6 +18,11 @@ from agentis.errors import (
     SessionError,
     ToolExecutionError,
 )
+from agentis.extensions.cost_tracker import CostTracker
+from agentis.extensions.dream import DreamExtension
+from agentis.hooks.registry import HookRegistry
+from agentis.memory.index import MemoryIndex, MemoryPointer
+from agentis.memory.recall_tool import RecallTool
 from agentis.protocols import (
     Extension,
     IsolationStrategy,
@@ -42,7 +32,16 @@ from agentis.protocols import (
     Tool,
     ToolSchema,
 )
+from agentis.providers.anthropic import AnthropicProvider
+from agentis.providers.base import BaseProvider
+from agentis.providers.openai import OpenAIProvider
+from agentis.providers.openai_compatible import OpenAICompatibleProvider
+from agentis.runtime.agent import AgentRuntime, StepResult
+from agentis.runtime.session import Session
 from agentis.token_utils import estimate_messages_tokens, estimate_tokens
+from agentis.tools.base import FunctionTool
+from agentis.tools.decorator import tool
+from agentis.tools.orchestrator import ToolOrchestrator
 from agentis.types import (
     ApprovalRequest,
     ContextEntry,

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
 
 from agentis.protocols import ProviderCapabilities, ToolSchema
-from agentis.types import Message, ProviderResponse, ToolCall
+from agentis.types import Message, ProviderResponse
 
 logger = logging.getLogger("agentis")
 

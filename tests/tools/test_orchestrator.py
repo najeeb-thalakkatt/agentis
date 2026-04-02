@@ -9,8 +9,7 @@ import pytest
 
 from agentis.tools.decorator import tool
 from agentis.tools.orchestrator import ToolOrchestrator
-from agentis.types import ApprovalRequest, Permission, ToolCall, ToolResult
-
+from agentis.types import ApprovalRequest, Permission, ToolCall
 
 # ── Test tools ──────────────────────────────────────────────
 

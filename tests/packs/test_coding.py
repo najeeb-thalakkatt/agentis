@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from agentis.packs.coding import TOOLS, get_coding_tools
+from agentis.packs.coding import get_coding_tools
 from agentis.types import Permission
 
 

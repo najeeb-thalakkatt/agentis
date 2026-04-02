@@ -55,7 +55,7 @@ class TestMemoryIndex:
 
     @pytest.mark.asyncio
     async def test_remember_with_tags(self, memory: MemoryIndex) -> None:
-        topic_id = await memory.remember(
+        await memory.remember(
             "DB config", "PostgreSQL on port 5432", tags=["infra", "database"]
         )
         entries = memory.entries

@@ -12,7 +12,7 @@ import pytest
 
 from agentis.errors import ConfigError, ProviderError
 from agentis.protocols import ProviderCapabilities, ToolSchema
-from agentis.types import Message, ToolCall
+from agentis.types import Message
 
 
 class TestAnthropicProviderImport:
@@ -90,7 +90,6 @@ class TestAnthropicMessageConversion:
     def test_tool_result_message_format(self) -> None:
         """Tool results should be converted to Anthropic's tool_result format."""
         p = self._make_provider()
-        from agentis.types import ToolResult
 
         msg = Message(
             role="tool",

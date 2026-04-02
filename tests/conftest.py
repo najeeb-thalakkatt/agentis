@@ -16,9 +16,7 @@ from agentis.types import (
     Permission,
     ProviderResponse,
     TokenUsage,
-    ToolCall,
 )
-
 
 # ── Mock Provider ───────────────────────────────────────────
 
