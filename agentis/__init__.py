@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from agentis.memory.index import MemoryIndex, MemoryPointer
+from agentis.memory.recall_tool import RecallTool
+
 from agentis.errors import (
     AgentisError,
     CompactionError,
@@ -43,6 +46,10 @@ __version__ = "0.1.0"
 __all__ = [
     # Version
     "__version__",
+    # Memory
+    "MemoryIndex",
+    "MemoryPointer",
+    "RecallTool",
     # Types
     "ApprovalRequest",
     "ContextEntry",
