@@ -65,8 +65,12 @@ class ProviderCapabilities:
     supports_tool_use: bool = True
     supports_streaming: bool = True
     supports_prompt_caching: bool = False
-    supports_vision: bool = False
+    supports_extended_thinking: bool = False
+    supports_image_input: bool = False
+    supports_system_message: bool = True
     max_context_tokens: int = 128_000
+    max_tools: int = 128
+    parallel_tool_calls: bool = True
 
 
 @runtime_checkable
@@ -133,8 +137,12 @@ class MailboxBackend(Protocol):
         """Receive all pending messages for an agent."""
         ...
 
-    async def cleanup(self) -> None:
-        """Clean up mailbox resources."""
+    async def peek(self, agent_name: str) -> list[dict[str, Any]]:
+        """Peek at pending messages without consuming them."""
+        ...
+
+    async def clear(self, agent_name: str) -> None:
+        """Clear all messages for an agent."""
         ...
 
 
@@ -143,24 +151,26 @@ class MailboxBackend(Protocol):
 
 @runtime_checkable
 class Extension(Protocol):
-    """Protocol for runtime extensions (4-method lifecycle)."""
+    """Protocol for runtime extensions (4-method lifecycle).
 
-    async def on_session_start(self, session_id: str) -> None:
-        """Called when a new session begins."""
+    Extensions hook into the runtime lifecycle for opt-in behavior
+    like cost tracking or background memory consolidation.
+    """
+
+    name: str
+
+    async def on_runtime_start(self, runtime: Any) -> None:
+        """Called when the runtime is initialized."""
         ...
 
-    async def on_session_end(self, session_id: str) -> None:
-        """Called when a session ends."""
-        ...
-
-    async def on_turn_end(
-        self,
-        messages: list[Message],
-        usage: TokenUsage,
-    ) -> None:
+    async def on_turn_end(self, runtime: Any, result: Any) -> None:
         """Called after each turn (LLM call + tool execution)."""
         ...
 
-    async def on_error(self, error: Exception) -> None:
-        """Called when an error occurs during execution."""
+    async def on_idle(self, runtime: Any, idle_seconds: float) -> None:
+        """Called when the user is idle (for background maintenance)."""
+        ...
+
+    async def on_runtime_stop(self, runtime: Any) -> None:
+        """Called when the runtime is shutting down."""
         ...

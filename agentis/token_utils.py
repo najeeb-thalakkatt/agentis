@@ -17,7 +17,7 @@ def estimate_tokens(text: str) -> int:
     Uses chars/3 heuristic — fast, no dependencies, roughly accurate
     for English text across most tokenizers.
     """
-    return len(text) // 3
+    return len(text) // 3 + 1
 
 
 def estimate_messages_tokens(messages: list[Message]) -> int:
