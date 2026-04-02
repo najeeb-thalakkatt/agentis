@@ -1,0 +1,1197 @@
+What This Project Is
+Agentis is a production-grade, provider-agnostic Python framework for building agentic AI systems. It packages 9 architectural patterns (inspired by how frontier AI coding agents work) into a composable library that works with any LLM backend.
+One-liner: The Django of AI agents — batteries-included, opinionated, but extensible.
+
+CORE PRINCIPLE
+9 Agentic Patterns for Production AI Agents
+Practical Python implementations of the architecture that powers a smart agent
+INTRO
+01 – Memory as Index — The single most important pattern. Store lightweight pointers in context, fetch full data on demand.
+02 – Five-Layer Compaction — A tiered eviction strategy where stale tool results get cleared first, then old conversations get summarized, then durable facts get extracted, and only as a last resort do you truncate.
+03 – Permission-Gated Tools — Every capability is a typed tool with structured I/O. Read-only tools run in parallel; mutations run serially behind a lock. The model never parses raw shell output.
+04 – Three Agent Models — Fork (cheap clones sharing prompt cache), Teammate (file-based mailbox), Worktree (isolated git branches). Each fits a different parallelism scenario.
+05 – Skeptical Memory — The agent re-reads files before editing them, never trusts its own recall, and only logs successful actions to memory.
+06 – Background Dreaming — A forked agent consolidates memory during idle time without interrupting the main reasoning thread.
+07 – File Deduplication — Hash-based dedup to avoid re-reading unchanged files, plus preview-and-reference for large files.
+08 – Safety Hooks — Deterministic code-level enforcement that the model can't bypass, covering destructive commands, file sandboxing, and human approval gates.
+09 – The Full Loop — How all 8 patterns compose into one coherent agentic runtime: context assembly → plan → execute with safety → verify → update memory → compact → respond.
+Each pattern includes the problem it solves, the insight from the leak, working code, and a key takeaway. 
+
+PATTERN 01
+Memory as Index, Not Storage
+The most important pattern: store pointers, not data
+
+THE PROBLEM
+Naive agents dump everything into context. After a few interactions, the context window fills up, the model gets confused, and quality degrades. This is 'context entropy.'
+
+
+THE INSIGHT
+Should treats memory like a database index — lightweight pointers that tell the agent WHERE to find information, not the information itself. The MEMORY.md file is always loaded (~150 chars per line), but actual project knowledge lives in separate topic files fetched on-demand.
+
+# memory_index.py — Agentic Memory Index Pattern
+
+import json, os, hashlib
+from datetime import datetime
+
+class AgentMemory:
+    """
+    Core idea: The index is ALWAYS in context.
+    The actual data is on disk, fetched only when needed.
+    """
+
+    def __init__(self, workspace=".agent/memory"):
+        os.makedirs(workspace, exist_ok=True)
+        self.workspace = workspace
+        self.index_path = f"{workspace}/MEMORY.md"
+        self.index = self._load_index()
+
+    def _load_index(self):
+        """Index is tiny — always fits in context window."""
+        if os.path.exists(self.index_path):
+            with open(self.index_path) as f:
+                return f.read()
+        return "# Agent Memory Index\n"
+
+    def remember(self, topic, content, tags=None):
+        """
+        CRITICAL PATTERN: Only store a pointer in the index.
+        Full content goes to a separate topic file.
+        """
+        # Write full content to a topic file
+        topic_id = hashlib.md5(topic.encode()).hexdigest()[:8]
+        topic_path = f"{self.workspace}/topics/{topic_id}.md"
+        os.makedirs(os.path.dirname(topic_path), exist_ok=True)
+
+        with open(topic_path, "w") as f:
+            f.write(f"# {topic}\n\n{content}\n")
+
+        # Only a ~150-char pointer goes into the index
+        tag_str = f" [{', '.join(tags)}]" if tags else ""
+        pointer = (
+            f"- {topic}: ./{topic_id}.md{tag_str}\n"
+        )
+        self.index += pointer
+        self._save_index()
+
+        return topic_id
+
+    def recall(self, topic_id):
+        """Fetch full content only when the agent needs it."""
+        path = f"{self.workspace}/topics/{topic_id}.md"
+        if os.path.exists(path):
+            with open(path) as f:
+                return f.read()
+        return None
+
+    def get_context_payload(self):
+        """
+        This is what goes into every LLM call.
+        Notice: it's just the index, NOT all the data.
+        """
+        return {
+            "role": "system",
+            "content": (
+                "Your memory index (use recall tool to "
+                "fetch details):\n\n" + self.index
+            ),
+        }
+
+    def _save_index(self):
+        with open(self.index_path, "w") as f:
+            f.write(self.index)
+
+
+# --- Usage ---
+mem = AgentMemory()
+
+# Agent learns about the project's auth system
+mem.remember(
+    topic="Auth architecture",
+    content="""
+    Uses JWT tokens with 15-min expiry.
+    Refresh tokens stored in httpOnly cookies.
+    Auth middleware in src/middleware/auth.ts.
+    Rate limiting: 100 req/min per user.
+    """,
+    tags=["security", "backend"],
+)
+
+# What the LLM actually sees in context:
+# - Auth architecture: ./a1b2c3d4.md [security, backend]
+#
+# NOT the full 500 words of auth documentation.
+# The agent uses a "recall" tool to fetch when needed.
+KEY TAKEAWAY
+Your context window is precious real estate. Store pointers, not paragraphs. The agent should have a 'recall' tool to fetch details on demand — just like how you'd use grep rather than memorizing a whole file.
+
+PATTERN 02
+Five-Layer Context Compaction
+A tiered eviction strategy for long-running sessions
+
+THE PROBLEM
+In a long session, the agent accumulates tool results, file contents, error logs, and conversation history. Without active management, it hits the context limit and either crashes or loses track of what it was doing.
+THE INSIGHT
+Should uses five separate compaction strategies that fire at different thresholds. Each layer preserves different types of information at different fidelities. Think of it like CPU cache levels — L1 is fast and small, L5 is slow and lossy.
+
+# context_compaction.py — Five-Layer Compaction
+
+from dataclasses import dataclass, field
+from enum import IntEnum
+
+class Priority(IntEnum):
+    CRITICAL = 0   # Never evict (system prompt, memory index)
+    HIGH = 1       # Recent edits, current errors
+    MEDIUM = 2     # Earlier tool results, file reads
+    LOW = 3        # Old conversation turns
+    EPHEMERAL = 4  # Stale tool outputs, superseded info
+
+@dataclass
+class ContextEntry:
+    content: str
+    priority: Priority
+    token_count: int
+    timestamp: float
+    entry_type: str  # "tool_result", "conversation", "file_read"
+
+class ContextCompactor:
+    """
+    Five compaction layers, each progressively more aggressive.
+    The key insight: different info ages at different rates.
+    """
+
+    def __init__(self, max_tokens=128_000):
+        self.max_tokens = max_tokens
+        self.entries: list[ContextEntry] = []
+
+    def current_tokens(self):
+        return sum(e.token_count for e in self.entries)
+
+    def compact(self):
+        """Run compaction layers until we're under budget."""
+        layers = [
+            self._layer1_clear_stale_tool_results,
+            self._layer2_summarize_old_conversation,
+            self._layer3_extract_session_memory,
+            self._layer4_summarize_full_history,
+            self._layer5_truncate_oldest,
+        ]
+        for layer_fn in layers:
+            if self.current_tokens() <= self.max_tokens * 0.8:
+                break  # 80% threshold = breathing room
+            layer_fn()
+
+    # --- Layer 1: Least destructive ---
+    def _layer1_clear_stale_tool_results(self):
+        """
+        Tool results older than N turns are replaced
+        with a one-line summary.
+        Example: 500-line grep output → "grep found 23 matches
+        in src/auth/"
+        """
+        for entry in self.entries:
+            if (entry.entry_type == "tool_result"
+                and entry.priority >= Priority.MEDIUM):
+                entry.content = self._one_line_summary(
+                    entry.content
+                )
+                entry.token_count = self._count(entry.content)
+
+    # --- Layer 2: Summarize conversation ---
+    def _layer2_summarize_old_conversation(self):
+        """
+        Old conversation turns get summarized.
+        Keep the last 5 turns verbatim; summarize the rest.
+        """
+        convos = [
+            e for e in self.entries
+            if e.entry_type == "conversation"
+        ]
+        if len(convos) > 5:
+            old = convos[:-5]
+            summary = self._llm_summarize(
+                [e.content for e in old]
+            )
+            # Replace all old turns with one summary entry
+            for e in old:
+                self.entries.remove(e)
+            self.entries.insert(0, ContextEntry(
+                content=f"[Earlier conversation summary]"
+                        f"\n{summary}",
+                priority=Priority.MEDIUM,
+                token_count=self._count(summary),
+                timestamp=old[0].timestamp,
+                entry_type="summary",
+            ))
+
+    # --- Layer 3: Extract durable facts ---
+    def _layer3_extract_session_memory(self):
+        """
+        Pull out durable facts and save to session memory.
+        "User prefers tabs over spaces" → memory
+        "Fixed bug in line 42" → can be discarded
+        """
+        facts = self._extract_durable_facts()
+        for fact in facts:
+            self._save_to_session_memory(fact)
+        # Now those facts live outside context
+
+    # --- Layer 4: Nuclear summarization ---
+    def _layer4_summarize_full_history(self):
+        """Summarize EVERYTHING into a brief state snapshot."""
+        pass  # LLM call to create 500-token summary
+
+    # --- Layer 5: Last resort ---
+    def _layer5_truncate_oldest(self):
+        """Drop oldest entries. You've lost information."""
+        self.entries.sort(key=lambda e: e.priority)
+        while self.current_tokens() > self.max_tokens * 0.7:
+            # Remove lowest priority first
+            if self.entries:
+                removed = self.entries.pop()
+
+    # helpers (simplified)
+    def _one_line_summary(self, content):
+        lines = content.strip().split("\n")
+        return f"[{len(lines)} lines — summarized]"
+
+    def _count(self, text):
+        return len(text) // 4  # rough token estimate
+
+    def _llm_summarize(self, contents):
+        return "Summary of earlier conversation..."
+
+    def _extract_durable_facts(self):
+        return []
+
+    def _save_to_session_memory(self, fact):
+        pass
+
+KEY TAKEAWAY
+Don't wait for the context to overflow. Proactively compact at ~80% capacity. Each layer trades more information for more space. Design your layers so the most recent and most relevant information survives longest.
+
+PATTERN 03
+Discrete, Permission-Gated Tools
+Why 'just give it a shell' isn't enough
+
+THE PROBLEM
+Many agentic tools give the model a bash shell and hope for the best. This is dangerous (rm -rf), inefficient (parsing raw stdout), and unreliable (the model has to remember exact CLI syntax).
+THE INSIGHT
+Should wraps each capability in a typed, permission-gated tool with structured inputs and outputs. Read-only tools run in parallel; mutating tools run serially. The model never has to parse raw text — it gets structured results.
+
+# tool_system.py — Permission-Gated Tool Architecture
+
+from enum import Enum
+from dataclasses import dataclass
+from typing import Any
+import asyncio
+
+class Permission(Enum):
+    READ_ONLY = "read_only"     # Can run in parallel
+    MUTATING = "mutating"       # Must run serially
+    DANGEROUS = "dangerous"     # Requires human approval
+
+@dataclass
+class ToolResult:
+    """Structured output — the model never parses raw text."""
+    success: bool
+    data: Any
+    summary: str         # Short version for context
+    full_output: str     # Written to disk if too large
+    tokens_used: int
+
+class Tool:
+    name: str
+    description: str
+    permission: Permission
+
+    async def execute(self, **kwargs) -> ToolResult:
+        raise NotImplementedError
+
+# --- Concrete tools ---
+
+class GrepTool(Tool):
+    """
+    WHY a dedicated grep tool instead of shell grep?
+    1. Structured output (file, line, match) not raw text
+    2. Automatic result truncation with summaries
+    3. Permission-gated (read-only, can run in parallel)
+    4. Respects .gitignore and permission boundaries
+    """
+    name = "grep"
+    description = "Search for patterns across files"
+    permission = Permission.READ_ONLY
+
+    async def execute(self, pattern, path=".", **kw):
+        # Returns structured matches, not raw stdout
+        matches = self._search(pattern, path)
+
+        if len(matches) > 50:
+            # DON'T dump 500 matches into context
+            summary = (
+                f"Found {len(matches)} matches across "
+                f"{len(set(m['file'] for m in matches))} "
+                f"files. Top files: ..."
+            )
+            return ToolResult(
+                success=True,
+                data=matches[:20],  # First 20 in context
+                summary=summary,
+                full_output=self._save_to_disk(matches),
+                tokens_used=self._estimate_tokens(matches[:20])
+            )
+        return ToolResult(
+            success=True,
+            data=matches,
+            summary=f"Found {len(matches)} matches",
+            full_output="",
+            tokens_used=self._estimate_tokens(matches),
+        )
+
+class FileEditTool(Tool):
+    """Mutating tool — runs serially, creates snapshots."""
+    name = "file_edit"
+    description = "Edit a file with a search/replace block"
+    permission = Permission.MUTATING
+
+    async def execute(self, path, old_text, new_text, **kw):
+        # Snapshot before editing (enables revert)
+        self._snapshot(path)
+        # Validate the edit
+        content = open(path).read()
+        if old_text not in content:
+            return ToolResult(
+                success=False,
+                data=None,
+                summary=f"old_text not found in {path}",
+                full_output="",
+                tokens_used=20,
+            )
+        # Apply edit
+        new_content = content.replace(old_text, new_text, 1)
+        with open(path, "w") as f:
+            f.write(new_content)
+        return ToolResult(
+            success=True,
+            data={"path": path, "lines_changed": 1},
+            summary=f"Edited {path}",
+            full_output="",
+            tokens_used=15,
+        )
+
+class ToolOrchestrator:
+    """
+    Key pattern: read-only tools run concurrently,
+    mutating tools run one at a time.
+    """
+
+    def __init__(self, tools: list[Tool]):
+        self.tools = {t.name: t for t in tools}
+        self._mutation_lock = asyncio.Lock()
+
+    async def run(self, tool_name, **kwargs):
+        tool = self.tools[tool_name]
+
+        if tool.permission == Permission.DANGEROUS:
+            approved = await self._ask_human(tool_name, kwargs)
+            if not approved:
+                return ToolResult(
+                    False, None, "User denied", "", 5
+                )
+
+        if tool.permission == Permission.MUTATING:
+            async with self._mutation_lock:
+                return await tool.execute(**kwargs)
+        else:
+            # Read-only: just run it, no lock needed
+            return await tool.execute(**kwargs)
+
+    async def run_parallel(self, calls: list[dict]):
+        """
+        Run multiple read-only tools at once.
+        Huge speedup: 5 grep calls take 1x time, not 5x.
+        """
+        tasks = []
+        for call in calls:
+            tool = self.tools[call["tool"]]
+            assert tool.permission == Permission.READ_ONLY
+            tasks.append(tool.execute(**call["args"]))
+        return await asyncio.gather(*tasks)
+
+KEY TAKEAWAY
+Wrap every capability in a typed tool with structured I/O. Gate mutations behind locks and dangerous ops behind human approval. Let read-only operations run in parallel. The model should never have to parse raw shell output.
+
+PATTERN 04
+Three Models of Multi-Agent Orchestration
+Fork, Teammate, and Worktree — each for different jobs
+
+THE PROBLEM
+A single agent thread bottlenecks on complex tasks. You need parallelism, but naive agent spawning leads to conflicts, duplicated work, and runaway costs.
+
+THE INSIGHT
+Should use three distinct subagent models: Fork (cheap clones sharing prompt cache), Teammate (file-based mailbox communication), and Worktree (isolated git branches). Each fits different scenarios.
+# multi_agent.py — Three Subagent Execution Models
+
+import asyncio, json, os, subprocess
+from dataclasses import dataclass
+
+@dataclass
+class AgentContext:
+    """The full state an agent carries."""
+    system_prompt: str
+    memory_index: str
+    conversation: list[dict]
+    project_path: str
+
+# ═══════════════════════════════════════════════
+#  MODEL 1: FORK
+#  Clone the parent agent. Shares prompt cache.
+#  Best for: parallel read-only investigation
+# ═══════════════════════════════════════════════
+
+class ForkAgent:
+    """
+    Creates a byte-identical copy of the parent context.
+    Because the context prefix is identical, the API's
+    prompt cache kicks in → running 5 forks costs ~1x.
+
+    Use when: "Search these 5 files for the bug"
+    """
+    def __init__(self, parent_context: AgentContext):
+        # Shallow copy — shares the same prefix
+        self.context = AgentContext(
+            system_prompt=parent_context.system_prompt,
+            memory_index=parent_context.memory_index,
+            conversation=parent_context.conversation.copy(),
+            project_path=parent_context.project_path,
+        )
+
+    async def run(self, task: str) -> str:
+        """
+        The fork gets ONE task, returns ONE result.
+        It cannot mutate files — read-only investigation.
+        """
+        messages = self.context.conversation + [
+            {"role": "user", "content": (
+                f"SUBTASK (read-only): {task}\n"
+                f"Return your findings. Do NOT edit files."
+            )}
+        ]
+        return await self._call_llm(messages)
+
+    async def _call_llm(self, messages):
+        return "Fork result..."  # API call here
+
+async def parallel_investigation(parent_ctx, tasks):
+    """
+    Spawn N forks, run in parallel. Cost ≈ 1 sequential call
+    because all forks share the same prompt cache prefix.
+    """
+    forks = [ForkAgent(parent_ctx) for _ in tasks]
+    results = await asyncio.gather(
+        *[f.run(task) for f, task in zip(forks, tasks)]
+    )
+    return results
+
+# ═══════════════════════════════════════════════
+#  MODEL 2: TEAMMATE
+#  Independent agent with file-based mailbox.
+#  Best for: long-running parallel work streams
+# ═══════════════════════════════════════════════
+
+class TeammateAgent:
+    """
+    Communicates via a shared mailbox directory.
+    Each agent reads/writes JSON messages.
+
+    Use when: "You handle the frontend, I'll do the API"
+    """
+    def __init__(self, name, mailbox_dir=".agent/mailbox"):
+        self.name = name
+        self.mailbox = mailbox_dir
+        os.makedirs(f"{mailbox_dir}/{name}", exist_ok=True)
+
+    def send(self, to: str, message: dict):
+        """Drop a message in another agent's mailbox."""
+        msg_path = (
+            f"{self.mailbox}/{to}/"
+            f"{self.name}_{len(os.listdir(f'{self.mailbox}/{to}'))}.json"
+        )
+        with open(msg_path, "w") as f:
+            json.dump({
+                "from": self.name,
+                "content": message,
+            }, f)
+
+    def check_mail(self) -> list[dict]:
+        """Read all pending messages."""
+        msgs = []
+        my_box = f"{self.mailbox}/{self.name}"
+        for fname in os.listdir(my_box):
+            with open(f"{my_box}/{fname}") as f:
+                msgs.append(json.load(f))
+            os.remove(f"{my_box}/{fname}")
+        return msgs
+
+    async def work_loop(self, initial_task):
+        """
+        Work on task, periodically check mailbox for
+        updates from other teammates.
+        """
+        task = initial_task
+        while not self._is_done(task):
+            # Do some work...
+            result = await self._do_step(task)
+            # Check if teammates sent updates
+            mail = self.check_mail()
+            for msg in mail:
+                task = self._integrate(task, msg)
+
+# ═══════════════════════════════════════════════
+#  MODEL 3: WORKTREE
+#  Each agent gets its own git branch.
+#  Best for: parallel code changes that might conflict
+# ═══════════════════════════════════════════════
+
+class WorktreeAgent:
+    """
+    Full isolation via git worktrees. Each agent works
+    on its own branch, then changes are merged.
+
+    Use when: "Refactor auth AND add tests simultaneously"
+    """
+    def __init__(self, name, base_branch="main"):
+        self.name = name
+        self.branch = f"agent/{name}"
+        self.worktree_path = f"/tmp/worktrees/{name}"
+        self._setup_worktree(base_branch)
+
+    def _setup_worktree(self, base):
+        subprocess.run(
+            ["git", "worktree", "add",
+             "-b", self.branch,
+             self.worktree_path, base],
+        )
+
+    async def work(self, task: str):
+        """Agent works freely in its isolated worktree."""
+        # All file edits happen in self.worktree_path
+        # No conflicts with other agents possible
+        pass
+
+    def merge_back(self, target="main"):
+        """After work is done, merge changes back."""
+        subprocess.run(
+            ["git", "checkout", target],
+        )
+        result = subprocess.run(
+            ["git", "merge", "--no-ff", self.branch],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return {"conflict": True, "output": result.stderr}
+        return {"conflict": False}
+
+    def cleanup(self):
+        subprocess.run(
+            ["git", "worktree", "remove", self.worktree_path]
+        )
+
+KEY TAKEAWAY
+Match the agent model to the task. Fork for cheap parallel reads (leverages prompt caching). Teammate for independent work streams that need coordination. Worktree for parallel code mutations that must stay isolated until merge.
+
+PATTERN 05
+Skeptical Memory — Trust but Verify
+The agent treats its own recall as unreliable
+
+THE PROBLEM
+Over long sessions, the agent's context accumulates stale facts. It 'remembers' a function signature from 30 minutes ago, but the code has changed since. It confidently uses the old signature and introduces a bug.
+
+THE INSIGHT
+agents are explicitly instructed to treat their own memory as a 'hint' and verify against the actual codebase before acting. Memory is a suggestion, not ground truth.
+
+# skeptical_memory.py — Trust But Verify Pattern
+
+class SkepticalAgent:
+    """
+    CORE PRINCIPLE: The agent's memory is a hint.
+    Before acting on any remembered fact, verify it
+    against the actual source of truth.
+    """
+
+    SYSTEM_PROMPT_ADDITION = """
+    ## Memory Protocol
+
+    Your memory (conversation history, session notes,
+    MEMORY.md) is a HINT, not ground truth.
+
+    Before you:
+    - Edit a function → READ the current file first
+    - Reference an API → GREP for its current signature
+    - Claim a test passes → RUN it now
+    - Use a dependency → CHECK package.json/requirements.txt
+
+    NEVER edit code based solely on what you "remember"
+    from earlier in the conversation. Files change.
+    Other agents may have modified them. Your memory
+    of line numbers is especially unreliable after
+    context compaction.
+    """
+
+    async def edit_with_verification(self, task):
+        """
+        WRONG approach (naive agent):
+          1. Remember file content from earlier
+          2. Generate edit based on memory
+          3. Apply edit → FAILS because file changed
+
+        RIGHT approach (skeptical agent):
+          1. Read the file RIGHT NOW
+          2. Verify assumptions against current state
+          3. Generate edit based on fresh read
+          4. Apply edit
+          5. Run tests to verify
+        """
+
+        # Step 1: What do we think we know?
+        memory_hint = self.recall_from_memory(task)
+        # e.g., "auth.ts has a validateToken() on line 42"
+
+        # Step 2: Verify against reality
+        actual_content = await self.tools.read_file(
+            memory_hint["file_path"]
+        )
+
+        # Step 3: Check if our memory is still accurate
+        if memory_hint["expected_content"] not in \
+                actual_content.data:
+            # Memory is STALE — update it
+            self.update_memory(
+                memory_hint["topic"],
+                actual_content.data,
+            )
+            # Re-plan based on fresh information
+            return await self.replan(task, actual_content)
+
+        # Step 4: Memory checks out — proceed with edit
+        edit_result = await self.tools.file_edit(
+            path=memory_hint["file_path"],
+            old_text=memory_hint["expected_content"],
+            new_text=self.generate_new_content(task),
+        )
+
+        # Step 5: ALWAYS verify the result
+        test_result = await self.tools.run_tests()
+        if not test_result.success:
+            # Edit broke something — revert and retry
+            await self.tools.revert_last_edit()
+            return await self.retry_with_fresh_context(task)
+
+        return edit_result
+
+    async def write_then_index(self, topic, content, path):
+        """
+        STRICT WRITE DISCIPLINE:
+        Only update the memory index AFTER a successful
+        file write. Never index a failed attempt.
+
+        This prevents context pollution from failed edits.
+        """
+        # 1. Attempt the write
+        result = await self.tools.file_edit(
+            path=path,
+            old_text="",
+            new_text=content,
+        )
+
+        # 2. Only index if write succeeded
+        if result.success:
+            self.memory.remember(
+                topic=topic,
+                content=f"Written to {path}",
+                tags=["verified"],
+            )
+        # If write failed, memory stays clean.
+        # No phantom entries about things that
+        # didn't actually happen.
+KEY TAKEAWAY
+Inject a 'verify before acting' discipline into your agent's system prompt. Never edit based on stale memory. Always re-read before writing. Only update the memory index after confirmed successful actions — never log failed attempts.
+
+PATTERN 06
+Background Maintenance via Forked Agents
+Housekeeping that doesn't corrupt the main reasoning loop
+
+THE PROBLEM
+The agent needs to consolidate memories, clean up stale context, and maintain its own state. But if you do this in the main conversation thread, it interrupts the user's flow and risks derailing the agent's chain of thought.
+THE INSIGHT
+A separate forked agent to run 'subconsciousness' — background memory consolidation that merges observations, removes contradictions, and converts vague notes into structured facts. The main agent's reasoning is never interrupted.
+# background_maintenance.py — Dream/Consolidation Pattern
+
+import asyncio
+from datetime import datetime
+
+class DreamAgent:
+    """
+    A background agent that consolidates memory while
+    the user is idle. Runs as a FORKED agent so it
+    never corrupts the main agent's reasoning.
+
+    """
+
+    CONSOLIDATION_PROMPT = """
+    You are a memory consolidation agent.
+    Review the raw session logs below and:
+
+    1. MERGE duplicate or related observations
+       "auth uses JWT" + "tokens expire in 15m"
+       → "Auth: JWT with 15-min expiry, refresh via httpOnly cookie"
+
+    2. REMOVE contradictions (keep the latest)
+       Old: "Database is PostgreSQL"
+       New: "Migrated to CockroachDB last week"
+       → Keep only CockroachDB entry
+
+    3. CONVERT vague notes to structured facts
+       Vague: "something weird with the cache"
+       Structured: "Redis cache returns stale data after
+       config reload — needs FLUSHALL or restart"
+
+    4. DISCARD ephemeral information
+       Remove: "Currently debugging line 42" (stale)
+       Remove: "Waiting for CI to finish" (temporal)
+       Keep: "CI pipeline requires Node 20+" (durable)
+
+    Output an updated MEMORY.md index.
+    """
+
+    async def consolidate(self, session_logs, current_memory):
+        """
+        This runs in a SEPARATE agent context.
+        It cannot see or affect the main conversation.
+        """
+        messages = [
+            {"role": "system", "content": self.CONSOLIDATION_PROMPT},
+            {"role": "user", "content": (
+                f"Current memory:\n{current_memory}\n\n"
+                f"Raw session logs:\n{session_logs}"
+            )}
+        ]
+        result = await self._call_llm(messages)
+        return result  # Updated MEMORY.md content
+
+class BackgroundScheduler:
+    """
+    Manages when background maintenance runs.
+    Key: NEVER during active user interaction.
+    """
+
+    def __init__(self, main_agent, dream_agent):
+        self.main = main_agent
+        self.dream = dream_agent
+        self.last_user_activity = datetime.now()
+        self.idle_threshold = 120  # seconds
+
+    async def monitor(self):
+        """Run consolidation when user goes idle."""
+        while True:
+            await asyncio.sleep(30)
+            idle_time = (
+                datetime.now() - self.last_user_activity
+            ).seconds
+
+            if idle_time > self.idle_threshold:
+                # User is idle — safe to consolidate
+                updated = await self.dream.consolidate(
+                    session_logs=self.main.get_recent_logs(),
+                    current_memory=self.main.memory.index,
+                )
+                # Atomically swap the memory index
+                self.main.memory.index = updated
+                self.main.memory._save_index()
+
+    def on_user_activity(self):
+        """Reset idle timer on any user interaction."""
+        self.last_user_activity = datetime.now()
+KEY TAKEAWAY
+Run maintenance in a separate agent fork, never in the main reasoning thread. Only consolidate during idle periods. The consolidation should merge duplicates, resolve contradictions, convert vague notes to structured facts, and discard ephemeral information.
+
+PATTERN 07
+File Deduplication & Lazy Loading
+Keep the context window lean even on massive codebases
+
+THE PROBLEM
+The agent reads a 2000-line file, uses 10 lines of it, then reads it again 5 minutes later. Both full reads are in context, wasting thousands of tokens on duplicate content.
+
+THE INSIGHT
+Should track file hashes to avoid re-reading unchanged files. Large tool outputs get written to disk with only a summary/preview in context. The model gets just enough to decide if it needs the full content.
+
+# file_dedup.py — File Dedup & Lazy Loading
+
+import hashlib
+
+class SmartFileReader:
+    """
+    Key patterns:
+    1. Hash-based dedup — don't re-read unchanged files
+    2. Preview + reference — large files stay on disk
+    3. Targeted reads — line ranges, not whole files
+    """
+
+    def __init__(self, max_inline_tokens=2000):
+        self.file_cache = {}  # path → {hash, summary}
+        self.max_inline = max_inline_tokens
+
+    async def read(self, path, line_range=None):
+        """
+        Smart read that minimizes context usage.
+        """
+        current_hash = self._hash_file(path)
+
+        # DEDUP: File unchanged since last read?
+        if path in self.file_cache:
+            cached = self.file_cache[path]
+            if cached["hash"] == current_hash:
+                return {
+                    "status": "unchanged",
+                    "summary": cached["summary"],
+                    "hint": "File has not changed since "
+                            "last read. Use cached knowledge.",
+                    "tokens_used": 20,  # Just the hint
+                }
+
+        # Read the file (or a range)
+        content = self._read_file(path, line_range)
+        tokens = len(content) // 4
+
+        # LAZY LOADING: Too large for context?
+        if tokens > self.max_inline:
+            # Write full content to disk reference
+            ref_path = self._save_reference(path, content)
+            preview = self._generate_preview(content)
+
+            self.file_cache[path] = {
+                "hash": current_hash,
+                "summary": preview,
+            }
+
+            return {
+                "status": "large_file",
+                "preview": preview,
+                "reference": ref_path,
+                "total_lines": content.count("\n"),
+                "hint": "Full content saved to disk. "
+                        "Use grep or read specific line "
+                        "ranges to find what you need.",
+                "tokens_used": len(preview) // 4,
+            }
+
+        # Small enough — include inline
+        self.file_cache[path] = {
+            "hash": current_hash,
+            "summary": self._summarize(content),
+        }
+        return {
+            "status": "inline",
+            "content": content,
+            "tokens_used": tokens,
+        }
+
+    def _generate_preview(self, content):
+        """
+        Show structure, not content.
+        For code: imports, class/function signatures
+        For text: first paragraph + headings
+        """
+        lines = content.split("\n")
+        preview_lines = []
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if any(stripped.startswith(kw) for kw in [
+                "import ", "from ", "class ", "def ",
+                "function ", "export ", "interface ",
+                "# ", "## ", "### ",
+            ]):
+                preview_lines.append(f"L{i+1}: {line}")
+        return "\n".join(preview_lines[:30])
+
+    def invalidate(self, path):
+        """Call after file is edited."""
+        self.file_cache.pop(path, None)
+
+    def _hash_file(self, path):
+        with open(path, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()
+
+    def _read_file(self, path, line_range=None):
+        with open(path) as f:
+            lines = f.readlines()
+        if line_range:
+            start, end = line_range
+            return "".join(lines[start - 1:end])
+        return "".join(lines)
+
+    def _save_reference(self, path, content):
+        ref = f"/tmp/agent_refs/{path.replace('/', '_')}"
+        with open(ref, "w") as f:
+            f.write(content)
+        return ref
+
+    def _summarize(self, content):
+        lines = content.split("\n")
+        return f"{len(lines)} lines"
+
+KEY TAKEAWAY
+Track file hashes to skip redundant reads. For large files, put a structural preview (signatures, headings) in context and keep the full content on disk. Always prefer targeted line-range reads over reading entire files.
+
+PATTERN 08
+Structural Safety via Lifecycle Hooks
+Don't rely on the model to self-police — enforce it in code
+
+THE PROBLEM
+You tell the model 'don't delete production databases' in the system prompt. It works 99% of the time. The 1% failure rate is catastrophic.
+
+THE INSIGHT
+25+ lifecycle hooks (PreToolUse, PostToolUse, etc.) that intercept operations at the code level, not the prompt level. Dangerous operations are blocked deterministically before they reach Execution.
+
+# safety_hooks.py — Structural Safety via Hooks
+
+import re
+from dataclasses import dataclass
+from enum import Enum
+from typing import Callable
+
+class HookResult(Enum):
+    ALLOW = "allow"
+    DENY = "deny"
+    ASK_HUMAN = "ask_human"
+    MODIFY = "modify"  # Transform the operation
+
+@dataclass
+class HookContext:
+    tool_name: str
+    arguments: dict
+    agent_id: str
+    session_id: str
+
+# Type for hook functions
+HookFn = Callable[[HookContext], HookResult]
+
+class SafetyHookRegistry:
+    """
+    25+ lifecycle events, each with a chain of hooks.
+    Hooks are CODE, not prompts. They execute
+    deterministically regardless of what the model wants.
+    """
+
+    def __init__(self):
+        self.hooks: dict[str, list[HookFn]] = {
+            "pre_tool_use": [],
+            "post_tool_use": [],
+            "pre_file_edit": [],
+            "pre_bash_execute": [],
+            "session_start": [],
+            "session_end": [],
+        }
+
+    def register(self, event: str, hook: HookFn):
+        self.hooks[event].append(hook)
+
+    async def run_hooks(self, event, context):
+        """
+        Run all hooks for an event.
+        ANY hook returning DENY blocks the operation.
+        """
+        for hook in self.hooks.get(event, []):
+            result = hook(context)
+            if result == HookResult.DENY:
+                return HookResult.DENY
+            if result == HookResult.ASK_HUMAN:
+                return HookResult.ASK_HUMAN
+        return HookResult.ALLOW
+
+
+# ═══════════════════════════════════════════════
+#  PRACTICAL SAFETY HOOKS
+# ═══════════════════════════════════════════════
+
+def block_destructive_commands(ctx: HookContext):
+    """
+    DETERMINISTIC block on dangerous bash commands.
+    The model cannot talk its way past this.
+    """
+    if ctx.tool_name != "bash":
+        return HookResult.ALLOW
+
+    cmd = ctx.arguments.get("command", "")
+    BANNED_PATTERNS = [
+        r"rm\s+-rf\s+/",           # rm -rf /
+        r"DROP\s+DATABASE",          # SQL drop
+        r":(){ :|:& };:",            # Fork bomb
+        r"mkfs\.",                   # Format disk
+        r"dd\s+if=.*of=/dev/",      # Overwrite device
+        r"curl.*\|\s*sh",           # Pipe to shell
+        r"wget.*\|\s*sh",
+        r"chmod\s+777",              # World-writable
+        r"> /dev/sd",                # Overwrite disk
+    ]
+    for pattern in BANNED_PATTERNS:
+        if re.search(pattern, cmd, re.IGNORECASE):
+            return HookResult.DENY
+    return HookResult.ALLOW
+
+
+def require_approval_for_git_push(ctx: HookContext):
+    """Never auto-push. Always ask the human."""
+    if ctx.tool_name != "bash":
+        return HookResult.ALLOW
+    cmd = ctx.arguments.get("command", "")
+    if "git push" in cmd or "git force" in cmd:
+        return HookResult.ASK_HUMAN
+    return HookResult.ALLOW
+
+
+def sandbox_file_access(ctx: HookContext):
+    """
+    Agents can only touch files within the project.
+    No reading ~/.ssh, /etc/passwd, etc.
+    """
+    if ctx.tool_name not in ("file_read", "file_edit"):
+        return HookResult.ALLOW
+
+    path = ctx.arguments.get("path", "")
+    FORBIDDEN = [
+        os.path.expanduser("~/.ssh"),
+        os.path.expanduser("~/.aws"),
+        "/etc/", "/var/", "/usr/",
+    ]
+    for prefix in FORBIDDEN:
+        if path.startswith(prefix):
+            return HookResult.DENY
+    return HookResult.ALLOW
+
+
+# --- Wire it up ---
+import os
+
+registry = SafetyHookRegistry()
+registry.register("pre_bash_execute", block_destructive_commands)
+registry.register("pre_bash_execute", require_approval_for_git_push)
+registry.register("pre_tool_use", sandbox_file_access)
+
+# Now every tool call passes through these hooks FIRST.
+# The model cannot bypass them — they're in the runtime,
+# not in the prompt.
+
+PATTERN 09
+Putting It All Together — The Agentic Loop
+How all the patterns compose into a production agent
+
+THE PROBLEM
+Individual patterns are useful, but the real power is in how they compose. How does a request flow through memory → tools → safety → compaction → response?
+
+THE INSIGHT
+The full agentic loop is: Load context (memory index + README.md etc..) → Receive task → Plan → Execute tools (with hooks) → Verify results → Update memory (only on success) → Compact if needed → Respond. Every pattern slots into a specific phase.
+
+# agentic_loop.py — The Complete Agent Runtime
+
+class AgentRuntime:
+    """
+    The full production loop, showing where each
+    pattern fits into the execution flow.
+    """
+
+    def __init__(self):
+        self.memory = AgentMemory()          # Pattern 1
+        self.compactor = ContextCompactor()   # Pattern 2
+        self.tools = ToolOrchestrator(...)    # Pattern 3
+        self.safety = SafetyHookRegistry()   # Pattern 8
+        self.file_reader = SmartFileReader() # Pattern 7
+        self.dreamer = DreamAgent()          # Pattern 6
+
+    async def handle_request(self, user_message: str):
+        """One full turn of the agentic loop."""
+
+        # ── Phase 1: ASSEMBLE CONTEXT ──────────────
+        context = [
+            self.memory.get_context_payload(),  # Pattern 1
+            {"role": "system", "content": self._load_base_md()},
+            {"role": "system", "content": self._git_context()},
+        ]
+        context.extend(self.compactor.get_recent_history())
+
+        # ── Phase 2: PLAN ──────────────────────────
+        plan = await self._get_plan(context, user_message)
+        # Model returns a sequence of tool calls
+
+        # ── Phase 3: EXECUTE (with safety) ─────────
+        results = []
+        for step in plan:
+            # Safety hooks fire BEFORE execution  # Pattern 8
+            hook_result = await self.safety.run_hooks(
+                "pre_tool_use",
+                HookContext(
+                    tool_name=step["tool"],
+                    arguments=step["args"],
+                    agent_id=self.id,
+                    session_id=self.session_id,
+                ),
+            )
+            if hook_result == HookResult.DENY:
+                results.append({"blocked": True, "reason": "safety"})
+                continue
+            if hook_result == HookResult.ASK_HUMAN:
+                approved = await self._ask_user(step)
+                if not approved:
+                    continue
+
+            # Can we parallelize?                  # Pattern 3
+            if self._all_read_only(step.get("parallel", [])):
+                batch_results = await self.tools.run_parallel(
+                    step["parallel"]
+                )
+                results.extend(batch_results)
+            else:
+                result = await self.tools.run(
+                    step["tool"], **step["args"]
+                )
+                results.append(result)
+
+            # Invalidate file cache on edits        # Pattern 7
+            if step["tool"] == "file_edit":
+                self.file_reader.invalidate(step["args"]["path"])
+
+        # ── Phase 4: VERIFY ────────────────────────
+        # Skeptical memory — don't trust, verify     # Pattern 5
+        if self._made_code_changes(results):
+            test_result = await self.tools.run("run_tests")
+            if not test_result.success:
+                await self._revert_changes(results)
+                return await self._retry_with_context(
+                    user_message, test_result
+                )
+
+        # ── Phase 5: UPDATE MEMORY ─────────────────
+        # ONLY after verified success                 # Pattern 5
+        for result in results:
+            if result.get("success") and result.get("notable"):
+                self.memory.remember(
+                    topic=result["summary"],
+                    content=result["details"],
+                )
+
+        # ── Phase 6: COMPACT IF NEEDED ─────────────
+        if self.compactor.current_tokens() > \
+                self.compactor.max_tokens * 0.8:
+            self.compactor.compact()              # Pattern 2
+
+        # ── Phase 7: RESPOND ───────────────────────
+        response = await self._generate_response(
+            context, results, user_message
+        )
+
+        # ── Background: DREAM (if idle) ────────────
+        # This runs asynchronously, NOT blocking    # Pattern 6
+        self._schedule_dream_if_idle()
+
+        return response
+KEY TAKEAWAY
+The agentic loop is assemble context → plan → execute with safety → verify → update memory (only on success) → compact → respond. Each pattern addresses a specific failure mode. Together, they create an agent that stays coherent over long sessions, doesn't hallucinate, and can't accidentally destroy things.
