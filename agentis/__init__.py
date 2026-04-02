@@ -21,6 +21,8 @@ from agentis.agents.teammate import TeammateAgent
 from agentis.agents.worktree import WorktreeAgent
 from agentis.agents.isolation import NoIsolation, TempDirIsolation
 from agentis.agents.mailbox import FileMailbox, InMemoryMailbox
+from agentis.extensions.dream import DreamExtension
+from agentis.extensions.cost_tracker import CostTracker
 
 from agentis.errors import (
     AgentisError,
@@ -118,6 +120,9 @@ __all__ = [
     "NoIsolation",
     "InMemoryMailbox",
     "FileMailbox",
+    # Extensions
+    "DreamExtension",
+    "CostTracker",
     # Errors
     "AgentisError",
     "CompactionError",
