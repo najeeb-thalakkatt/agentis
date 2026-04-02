@@ -110,6 +110,10 @@ class ApprovalRequest:
     tool_name: str
     arguments: dict[str, Any]
     reason: str
+    agent_id: str = ""
+    session_id: str = ""
+    conversation_summary: str = ""
+    turn_number: int = 0
 
 
 @dataclass(slots=True)

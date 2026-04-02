@@ -13,6 +13,9 @@ from agentis.providers.openai import OpenAIProvider
 from agentis.providers.openai_compatible import OpenAICompatibleProvider
 from agentis.compaction.compactor import CompactionResult, ContextCompactor
 from agentis.compaction.dedup import DedupResult, FileDeduplicator
+from agentis.hooks.registry import HookRegistry
+from agentis.runtime.agent import AgentRuntime, StepResult
+from agentis.runtime.session import Session
 
 from agentis.errors import (
     AgentisError,
@@ -96,6 +99,12 @@ __all__ = [
     "ContextCompactor",
     "DedupResult",
     "FileDeduplicator",
+    # Hooks
+    "HookRegistry",
+    # Runtime
+    "AgentRuntime",
+    "Session",
+    "StepResult",
     # Errors
     "AgentisError",
     "CompactionError",

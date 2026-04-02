@@ -72,7 +72,7 @@ class ContextCompactor:
 
         Returns a CompactionResult describing what happened.
         """
-        threshold = self._max_tokens * 0.8
+        threshold = self._max_tokens * 0.85
         if self.current_tokens() <= threshold:
             return CompactionResult(layers_run=0, tokens_freed=0, entries_removed=0)
 
@@ -140,10 +140,10 @@ class ContextCompactor:
             if e.entry_type == "conversation"
         ]
 
-        if len(convos) <= 5:
+        if len(convos) <= 8:
             return 0
 
-        old_entries = convos[:-5]
+        old_entries = convos[:-8]
         old_content = "\n".join(e.content for _, e in old_entries)
         old_tokens = sum(e.token_count for _, e in old_entries)
 
@@ -206,7 +206,7 @@ class ContextCompactor:
 
         Never removes CRITICAL entries.
         """
-        target = int(self._max_tokens * 0.7)
+        target = int(self._max_tokens * 0.75)
         freed = 0
 
         # Sort by priority (highest number = lowest priority = remove first)

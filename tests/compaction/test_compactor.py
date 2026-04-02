@@ -97,7 +97,7 @@ class TestCompactorLayer2:
     @pytest.mark.asyncio
     async def test_layer2_skipped_without_provider(self) -> None:
         c = ContextCompactor(max_tokens=100)
-        for i in range(10):
+        for i in range(12):
             c.add_entry(_entry(f"turn {i}", entry_type="conversation"))
         original_count = len(c.get_entries())
 
@@ -117,7 +117,7 @@ class TestCompactorLayer2:
         )
 
         c = ContextCompactor(max_tokens=100, utility_provider=mock_provider)
-        for i in range(10):
+        for i in range(12):
             c.add_entry(
                 _entry(f"conversation turn {i} " * 10, entry_type="conversation")
             )
@@ -126,8 +126,8 @@ class TestCompactorLayer2:
         assert freed > 0
         # Old turns replaced by a summary entry
         entries = [e for e in c.get_entries() if e.entry_type in ("conversation", "summary")]
-        # Should have fewer entries (5 recent + 1 summary)
-        assert len(entries) < 10
+        # Should have fewer entries (8 recent + 1 summary)
+        assert len(entries) < 12
 
 
 class TestCompactorLayer5:
@@ -166,12 +166,12 @@ class TestCompactorFullCycle:
     @pytest.mark.asyncio
     async def test_compact_runs_layers_until_under_budget(self) -> None:
         c = ContextCompactor(max_tokens=200)
-        # Add enough to exceed 80% (160 tokens)
+        # Add enough to exceed 85% (170 tokens)
         for _ in range(5):
             c.add_entry(
                 _entry("x" * 300, priority=Priority.MEDIUM, entry_type="tool_result")
             )
-        assert c.current_tokens() > 160
+        assert c.current_tokens() > 170
 
         result = await c.compact()
         assert isinstance(result, CompactionResult)

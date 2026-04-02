@@ -58,7 +58,7 @@ class AnthropicProvider(BaseProvider):
             supports_tool_use=True,
             supports_streaming=True,
             supports_prompt_caching=True,
-            supports_vision=True,
+            supports_image_input=True,
             max_context_tokens=200_000,
         )
 

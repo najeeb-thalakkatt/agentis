@@ -41,6 +41,6 @@ class OpenAICompatibleProvider(OpenAIProvider):
             supports_tool_use=True,
             supports_streaming=True,
             supports_prompt_caching=False,
-            supports_vision=False,
+            supports_image_input=False,
             max_context_tokens=32_000,
         )
