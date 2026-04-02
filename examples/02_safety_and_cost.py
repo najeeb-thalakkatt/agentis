@@ -12,8 +12,8 @@ Run: python examples/02_safety_and_cost.py
 from __future__ import annotations
 
 import asyncio
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -32,7 +32,6 @@ from agentis import (
     tool,
 )
 from agentis.hooks.builtins import block_destructive_commands, create_path_sandbox
-
 
 # ── Tools ───────────────────────────────────────────────────
 
@@ -61,7 +60,7 @@ async def safe_search(query: str) -> str:
 async def approval_callback(request: ApprovalRequest) -> bool:
     """Auto-deny dangerous operations for this example."""
     print(f"  [approval] Tool '{request.tool_name}' requested: {request.reason}")
-    print(f"  [approval] DENIED (auto-deny in example)")
+    print("  [approval] DENIED (auto-deny in example)")
     return False  # In production, prompt the user
 
 
@@ -106,7 +105,9 @@ async def main() -> None:
 
     # Set up safety hooks
     hooks = HookRegistry()
-    hooks.register(LifecycleEvent.PRE_TOOL_USE, block_destructive_commands, name="block_destructive")
+    hooks.register(
+        LifecycleEvent.PRE_TOOL_USE, block_destructive_commands, name="block_destructive",
+    )
     hooks.register(LifecycleEvent.PRE_TOOL_USE, create_path_sandbox(["/tmp/safe"]), name="sandbox")
 
     # Set up cost tracking with a $1 budget
@@ -139,7 +140,7 @@ async def main() -> None:
             print(f"  Step {step_num}: FINAL - {step.response.content[:80]}...")
 
     # Print cost report
-    print(f"\n--- Cost Report ---")
+    print("\n--- Cost Report ---")
     report = cost_tracker.get_report()
     print(f"  Total cost:   ${report['total_cost_usd']:.6f}")
     print(f"  Input tokens:  {report['total_input_tokens']}")

@@ -24,17 +24,18 @@ async def bash(command: str, timeout: int = 120) -> str:
         command: The shell command to execute.
         timeout: Timeout in seconds (default 120).
     """
+    proc = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
     try:
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(), timeout=timeout,
         )
     except asyncio.TimeoutError:
         proc.kill()
+        await proc.wait()
         raise TimeoutError(f"Command timed out after {timeout}s: {command}")
 
     output = stdout.decode("utf-8", errors="replace")

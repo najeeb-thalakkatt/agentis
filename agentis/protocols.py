@@ -7,7 +7,7 @@ Concrete implementations live in their respective modules.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -16,7 +16,6 @@ if TYPE_CHECKING:
         Message,
         Permission,
         ProviderResponse,
-        TokenUsage,
         ToolResult,
     )
 

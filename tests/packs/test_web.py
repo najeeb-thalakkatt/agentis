@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from agentis.packs.web import TOOLS, get_web_tools
+from agentis.packs.web import get_web_tools
 from agentis.types import Permission
 
 

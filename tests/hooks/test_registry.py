@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from agentis.hooks.registry import HookRegistry
 from agentis.types import HookAction, HookContext, HookResponse, LifecycleEvent
 
@@ -186,8 +184,10 @@ class TestHookRegistryToolFiltering:
             tools={"file_read", "file_write", "file_edit"},
         )
 
-        assert r.run_hooks(LifecycleEvent.PRE_TOOL_USE, _ctx(tool_name="file_read")).action == HookAction.DENY
-        assert r.run_hooks(LifecycleEvent.PRE_TOOL_USE, _ctx(tool_name="grep")).action == HookAction.ALLOW
+        result_read = r.run_hooks(LifecycleEvent.PRE_TOOL_USE, _ctx(tool_name="file_read"))
+        assert result_read.action == HookAction.DENY
+        result_grep = r.run_hooks(LifecycleEvent.PRE_TOOL_USE, _ctx(tool_name="grep"))
+        assert result_grep.action == HookAction.ALLOW
 
 
 class TestHookRegistryFailBehavior:

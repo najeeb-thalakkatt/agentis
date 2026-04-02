@@ -7,14 +7,10 @@ sequentially until token usage drops below 80% of max capacity.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from agentis.types import ContextEntry, Message, Priority, TokenUsage
-
-if TYPE_CHECKING:
-    from agentis.protocols import Provider
+from agentis.types import ContextEntry, Message, Priority
 
 logger = logging.getLogger("agentis")
 
@@ -68,7 +64,7 @@ class ContextCompactor:
         return self._entries[-n:]
 
     async def compact(self) -> CompactionResult:
-        """Run compaction layers until under 80% budget.
+        """Run compaction layers until under 85% budget.
 
         Returns a CompactionResult describing what happened.
         """
@@ -151,7 +147,10 @@ class ContextCompactor:
         try:
             response = await self._utility_provider.complete(
                 messages=[
-                    Message(role="system", content="Summarize the following conversation concisely."),
+                    Message(
+                        role="system",
+                        content="Summarize the following conversation concisely.",
+                    ),
                     Message(role="user", content=old_content),
                 ],
                 max_tokens=500,

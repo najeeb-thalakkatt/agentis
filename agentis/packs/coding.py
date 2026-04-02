@@ -15,7 +15,6 @@ import re
 
 from agentis.tools.base import FunctionTool
 from agentis.tools.decorator import tool
-from agentis.types import Permission
 
 
 @tool()

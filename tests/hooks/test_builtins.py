@@ -119,7 +119,8 @@ class TestPathSandbox:
     def test_multiple_allowed_paths(self) -> None:
         sandbox = create_path_sandbox(["/home/user/project", "/tmp"])
         assert sandbox(_file_ctx("file_write", "/tmp/test.txt")).action == HookAction.ALLOW
-        assert sandbox(_file_ctx("file_write", "/home/user/project/x.py")).action == HookAction.ALLOW
+        result = sandbox(_file_ctx("file_write", "/home/user/project/x.py"))
+        assert result.action == HookAction.ALLOW
         assert sandbox(_file_ctx("file_write", "/var/log/app.log")).action == HookAction.DENY
 
     def test_blocks_path_traversal(self) -> None:

@@ -8,9 +8,9 @@ import pytest
 
 from agentis.agents.isolation import TempDirIsolation
 from agentis.agents.worktree import WorktreeAgent
-from agentis.protocols import ProviderCapabilities, ToolSchema
+from agentis.protocols import ProviderCapabilities
 from agentis.runtime.agent import AgentRuntime
-from agentis.types import Message, ProviderResponse, TokenUsage
+from agentis.types import ProviderResponse, TokenUsage
 
 
 class MockProvider:
@@ -45,7 +45,7 @@ class TestWorktreeAgent:
         iso = TempDirIsolation()
         agent = WorktreeAgent(name="test-agent", runtime=rt, isolation=iso)
 
-        result = await agent.run("Do work")
+        await agent.run("Do work")
         # After run, isolation should be cleaned up
         assert not iso.working_dir().exists()
 

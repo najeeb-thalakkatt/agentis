@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from agentis.providers.base import BaseProvider
 from agentis.protocols import ProviderCapabilities, ToolSchema
+from agentis.providers.base import BaseProvider
 from agentis.types import Message, ProviderResponse, TokenUsage, ToolCall
-
 
 # ── Concrete subclass for testing abstract base ─────────────
 

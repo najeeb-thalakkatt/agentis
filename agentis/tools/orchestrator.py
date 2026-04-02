@@ -9,13 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from agentis.protocols import Tool, ToolSchema
 from agentis.types import ApprovalRequest, Permission, ToolCall, ToolResult
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger("agentis")
 

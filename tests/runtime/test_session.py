@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from agentis.runtime.session import Session
 from agentis.types import Message
 

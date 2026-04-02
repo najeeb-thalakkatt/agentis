@@ -21,13 +21,15 @@ from agentis.types import (
     ToolResult,
 )
 
-
 # ── Enum tests ──────────────────────────────────────────────
 
 
 class TestPriority:
     def test_ordering(self) -> None:
-        assert Priority.CRITICAL < Priority.HIGH < Priority.MEDIUM < Priority.LOW < Priority.EPHEMERAL
+        assert (
+            Priority.CRITICAL < Priority.HIGH < Priority.MEDIUM
+            < Priority.LOW < Priority.EPHEMERAL
+        )
 
     def test_values(self) -> None:
         assert Priority.CRITICAL == 0

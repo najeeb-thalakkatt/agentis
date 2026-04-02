@@ -7,10 +7,9 @@ from typing import Any
 
 import pytest
 
-from agentis.compaction.compactor import ContextCompactor
 from agentis.hooks.registry import HookRegistry
 from agentis.memory.index import MemoryIndex
-from agentis.protocols import ProviderCapabilities, ToolSchema
+from agentis.protocols import ProviderCapabilities
 from agentis.runtime.agent import AgentRuntime, StepResult
 from agentis.tools.decorator import tool
 from agentis.types import (
@@ -23,9 +22,7 @@ from agentis.types import (
     ProviderResponse,
     TokenUsage,
     ToolCall,
-    ToolResult,
 )
-
 
 # ── Mock Provider ───────────────────────────────────────────
 
@@ -98,7 +95,10 @@ class TestFullAgentLoop:
             # Turn 2: update based on search results
             ProviderResponse(
                 content="Found Alice, updating.",
-                tool_calls=[ToolCall(id="t2", name="update_record", arguments={"record_id": 1, "name": "Alice B."})],
+                tool_calls=[ToolCall(
+                    id="t2", name="update_record",
+                    arguments={"record_id": 1, "name": "Alice B."},
+                )],
                 usage=TokenUsage(input_tokens=40, output_tokens=20),
                 stop_reason="tool_use",
             ),
@@ -219,8 +219,14 @@ class TestFullAgentLoop:
     async def test_session_persistence_across_runs(self) -> None:
         """Multiple run() calls share session state."""
         provider = IntegrationMockProvider([
-            ProviderResponse(content="Hello!", tool_calls=[], usage=TokenUsage(input_tokens=5, output_tokens=5)),
-            ProviderResponse(content="Your name is Alice.", tool_calls=[], usage=TokenUsage(input_tokens=10, output_tokens=5)),
+            ProviderResponse(
+                content="Hello!", tool_calls=[],
+                usage=TokenUsage(input_tokens=5, output_tokens=5),
+            ),
+            ProviderResponse(
+                content="Your name is Alice.", tool_calls=[],
+                usage=TokenUsage(input_tokens=10, output_tokens=5),
+            ),
         ])
 
         rt = AgentRuntime(provider=provider)
@@ -237,7 +243,10 @@ class TestFullAgentLoop:
     async def test_fork_creates_independent_branch(self) -> None:
         """fork() creates an independent runtime with shared history."""
         provider = IntegrationMockProvider([
-            ProviderResponse(content="Noted.", tool_calls=[], usage=TokenUsage(input_tokens=5, output_tokens=5)),
+            ProviderResponse(
+                content="Noted.", tool_calls=[],
+                usage=TokenUsage(input_tokens=5, output_tokens=5),
+            ),
         ])
 
         rt = AgentRuntime(provider=provider)

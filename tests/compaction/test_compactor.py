@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agentis.compaction.compactor import CompactionResult, ContextCompactor
-from agentis.types import ContextEntry, Message, Priority, ProviderResponse, TokenUsage
+from agentis.types import ContextEntry, Priority, ProviderResponse, TokenUsage
 
 
 def _entry(

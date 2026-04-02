@@ -11,8 +11,8 @@ Run: python examples/01_quickstart.py
 from __future__ import annotations
 
 import asyncio
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -26,7 +26,6 @@ from agentis import (
     ToolCall,
     tool,
 )
-
 
 # ── Define tools with different permission levels ───────────
 
@@ -62,7 +61,10 @@ provider = MockProvider(responses=[
     # Turn 1: LLM decides to search
     ProviderResponse(
         content="Let me search for that.",
-        tool_calls=[ToolCall(id="t1", name="search_docs", arguments={"query": "quantum computing"})],
+        tool_calls=[ToolCall(
+            id="t1", name="search_docs",
+            arguments={"query": "quantum computing"},
+        )],
         usage=TokenUsage(input_tokens=50, output_tokens=20),
         stop_reason="tool_use",
     ),

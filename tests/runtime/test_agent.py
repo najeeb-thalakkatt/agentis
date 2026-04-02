@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import AsyncIterator
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from agentis.hooks.registry import HookRegistry
 from agentis.protocols import ProviderCapabilities, ToolSchema
 from agentis.runtime.agent import AgentRuntime, StepResult
 from agentis.tools.decorator import tool
@@ -22,8 +21,6 @@ from agentis.types import (
     TokenUsage,
     ToolCall,
 )
-from agentis.hooks.registry import HookRegistry
-
 
 # ── Mock Provider ───────────────────────────────────────────
 
@@ -212,7 +209,7 @@ class TestAgentRuntimeRun:
         provider = MockProvider(responses=infinite_tool_responses)
         rt = AgentRuntime(provider=provider, tools=[mock_grep], max_turns=3)
 
-        response = await rt.run("infinite loop")
+        await rt.run("infinite loop")
         assert len(provider.calls) <= 3
 
     @pytest.mark.asyncio

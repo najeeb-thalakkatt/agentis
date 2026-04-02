@@ -22,7 +22,6 @@ from _mock_provider import MockProvider
 
 from agentis import AgentRuntime, MemoryIndex
 
-
 # ── Part A: Persistent Memory ──────────────────────────────
 
 
@@ -36,7 +35,7 @@ async def demo_memory() -> None:
         print("Session 1: Storing findings...")
         memory = MemoryIndex(workspace=workspace)
 
-        tid1 = await memory.remember(
+        await memory.remember(
             "Project architecture",
             "Monorepo with 3 services: auth (Python), api (Go), web (React). "
             "Shared protobuf definitions in /proto. CI runs on GitHub Actions.",
@@ -48,7 +47,7 @@ async def demo_memory() -> None:
             "Discovered during security audit on 2026-03-15. Priority: high.",
             tags=["bug", "security", "high-priority"],
         )
-        tid3 = await memory.remember(
+        await memory.remember(
             "Team contacts",
             "Auth team lead: Alice (alice@example.com). "
             "API team lead: Bob (bob@example.com).",
