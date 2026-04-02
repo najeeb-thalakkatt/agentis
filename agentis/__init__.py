@@ -11,6 +11,8 @@ from agentis.providers.base import BaseProvider
 from agentis.providers.anthropic import AnthropicProvider
 from agentis.providers.openai import OpenAIProvider
 from agentis.providers.openai_compatible import OpenAICompatibleProvider
+from agentis.compaction.compactor import CompactionResult, ContextCompactor
+from agentis.compaction.dedup import DedupResult, FileDeduplicator
 
 from agentis.errors import (
     AgentisError,
@@ -89,6 +91,11 @@ __all__ = [
     "AnthropicProvider",
     "OpenAIProvider",
     "OpenAICompatibleProvider",
+    # Compaction
+    "CompactionResult",
+    "ContextCompactor",
+    "DedupResult",
+    "FileDeduplicator",
     # Errors
     "AgentisError",
     "CompactionError",
