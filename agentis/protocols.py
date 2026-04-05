@@ -70,6 +70,7 @@ class ProviderCapabilities:
     max_context_tokens: int = 128_000
     max_tools: int = 128
     parallel_tool_calls: bool = True
+    model_tier: str = "strong"  # "strong", "moderate", "weak"
 
 
 @runtime_checkable

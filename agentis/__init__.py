@@ -8,6 +8,7 @@ from agentis.agents.mailbox import FileMailbox, InMemoryMailbox
 from agentis.agents.teammate import TeammateAgent
 from agentis.agents.worktree import WorktreeAgent
 from agentis.compaction.compactor import CompactionResult, ContextCompactor
+from agentis.guardrails import ModelGuardrails
 from agentis.compaction.dedup import DedupResult, FileDeduplicator
 from agentis.errors import (
     AgentisError,

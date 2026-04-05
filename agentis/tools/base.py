@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Callable, Coroutine
 
@@ -9,6 +10,9 @@ from agentis.protocols import ToolSchema
 from agentis.types import Permission, ToolResult
 
 logger = logging.getLogger("agentis")
+
+# Max chars for full_output before truncation
+_MAX_FULL_OUTPUT = 8000
 
 
 class FunctionTool:
@@ -29,12 +33,14 @@ class FunctionTool:
         description: str,
         permission: Permission,
         parameter_schema: dict[str, Any],
+        use_utility: bool = False,
     ) -> None:
         self._fn = fn
         self.name = name
         self.description = description
         self.permission = permission
         self._parameter_schema = parameter_schema
+        self.use_utility = use_utility
 
     def get_schema(self) -> ToolSchema:
         """Return the JSON schema for this tool's parameters."""
@@ -52,7 +58,18 @@ class FunctionTool:
         """
         try:
             data = await self._fn(**kwargs)
-            data_str = str(data)
+
+            # Serialize to JSON for clean output; fall back to str()
+            try:
+                data_str = json.dumps(data, indent=2, default=str)
+            except (TypeError, ValueError):
+                data_str = str(data)
+
+            # Truncate large outputs to prevent context bloat
+            if len(data_str) > _MAX_FULL_OUTPUT:
+                truncated = data_str[:_MAX_FULL_OUTPUT]
+                data_str = truncated + f"\n... [{len(data_str) - _MAX_FULL_OUTPUT} chars truncated]"
+
             tokens = len(data_str) // 3
 
             return ToolResult(
