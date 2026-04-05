@@ -26,7 +26,8 @@ class CostTracker:
     """Extension that tracks token usage and estimated costs.
 
     Implements the Extension protocol. Records usage after each turn
-    and can enforce a spending budget.
+    and can enforce a spending budget. Includes stall detection to
+    signal when the agent is spinning without progress.
     """
 
     name: str = "cost_tracker"
@@ -36,6 +37,8 @@ class CostTracker:
         budget_usd: float | None = None,
         input_price_per_token: float = _DEFAULT_PRICING["input"],
         output_price_per_token: float = _DEFAULT_PRICING["output"],
+        stall_turn_threshold: int = 3,
+        stall_budget_fraction: float = 0.7,
     ) -> None:
         self._budget = budget_usd
         self._input_price = input_price_per_token
@@ -44,6 +47,13 @@ class CostTracker:
         self._total_input: int = 0
         self._total_output: int = 0
         self._total_cost: float = 0.0
+
+        # Stall detection
+        self._stall_turn_threshold = stall_turn_threshold
+        self._stall_budget_fraction = stall_budget_fraction
+        self._seen_tools: set[str] = set()
+        self._stall_turns: int = 0
+        self._should_force_conclude: bool = False
 
     async def on_runtime_start(self, runtime: Any) -> None:
         """Called when the runtime starts."""
@@ -76,6 +86,19 @@ class CostTracker:
                 "Cost budget exceeded: $%.4f / $%.4f",
                 self._total_cost, self._budget,
             )
+
+        # Stall detection: check tool calls in this turn's response
+        tool_calls = getattr(result, "tool_calls", None) or []
+        tool_signatures: list[str] = []
+        for tc in tool_calls:
+            if hasattr(tc, "name"):
+                # Use (name, sorted args) as a signature — same tool with
+                # different arguments counts as progress, not a stall.
+                args_key = ""
+                if hasattr(tc, "arguments") and tc.arguments:
+                    args_key = str(sorted(tc.arguments.items()))
+                tool_signatures.append(f"{tc.name}:{args_key}")
+        self._record_turn_for_stall(tool_signatures, self._total_cost)
 
     async def on_idle(self, runtime: Any, idle_seconds: float) -> None:
         """No-op for cost tracker."""
@@ -110,3 +133,68 @@ class CostTracker:
             "budget_usd": self._budget,
             "over_budget": self.is_over_budget(),
         }
+
+    # ── Stall Detection ────────────────────────────────────
+
+    def _record_turn_for_stall(
+        self,
+        tool_names: list[str],
+        cost_so_far: float,
+    ) -> None:
+        """Update stall tracking after a turn.
+
+        A turn is "stalling" if it introduces no previously unseen tool.
+        After ``stall_turn_threshold`` consecutive stall turns AND the
+        cost exceeds ``stall_budget_fraction`` of budget, the tracker
+        signals the runtime to force a conclusion.
+        """
+        if self._budget is None:
+            return
+
+        # Check if any new tool appeared this turn
+        new_tools = set(tool_names) - self._seen_tools
+        self._seen_tools.update(tool_names)
+
+        if new_tools:
+            self._stall_turns = 0
+        else:
+            self._stall_turns += 1
+
+        # Signal if stalling AND over budget fraction
+        if (
+            self._stall_turns >= self._stall_turn_threshold
+            and cost_so_far >= self._budget * self._stall_budget_fraction
+        ):
+            self._should_force_conclude = True
+            logger.warning(
+                "Stall detected: %d turns without new tools, "
+                "cost $%.4f / $%.4f (%.0f%% of budget)",
+                self._stall_turns,
+                cost_so_far,
+                self._budget,
+                (cost_so_far / self._budget) * 100,
+            )
+
+    @property
+    def should_force_conclude(self) -> bool:
+        """Whether the runtime should force the agent to conclude.
+
+        This is a consume-once flag: reading it resets the signal so
+        subsequent calls return False until a new stall is detected.
+        """
+        if self._should_force_conclude:
+            self._should_force_conclude = False
+            return True
+        return False
+
+    @property
+    def force_conclude_message(self) -> str:
+        """Message to inject when forcing conclusion."""
+        pct = 0.0
+        if self._budget and self._budget > 0:
+            pct = (self._total_cost / self._budget) * 100
+        return (
+            f"You have used {pct:.0f}% of your budget without new findings "
+            f"in the last {self._stall_turns} turns. Write your best answer "
+            f"with what you have. Do not make additional tool calls."
+        )

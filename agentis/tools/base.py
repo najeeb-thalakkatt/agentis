@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Callable, Coroutine
 
 from agentis.protocols import ToolSchema
+from agentis.token_utils import estimate_tokens
 from agentis.types import Permission, ToolResult
 
 logger = logging.getLogger("agentis")
+
+# Max chars for full_output before truncation
+_MAX_FULL_OUTPUT = 8000
 
 
 class FunctionTool:
@@ -29,12 +34,14 @@ class FunctionTool:
         description: str,
         permission: Permission,
         parameter_schema: dict[str, Any],
+        use_utility: bool = False,
     ) -> None:
         self._fn = fn
         self.name = name
         self.description = description
         self.permission = permission
         self._parameter_schema = parameter_schema
+        self.use_utility = use_utility
 
     def get_schema(self) -> ToolSchema:
         """Return the JSON schema for this tool's parameters."""
@@ -52,8 +59,22 @@ class FunctionTool:
         """
         try:
             data = await self._fn(**kwargs)
-            data_str = str(data)
-            tokens = len(data_str) // 3
+
+            # Serialize to JSON for clean output; fall back to str()
+            try:
+                data_str = json.dumps(data, indent=2, default=str)
+            except (TypeError, ValueError):
+                data_str = str(data)
+
+            # Truncate large outputs to prevent context bloat.
+            # Cut at a line boundary to avoid splitting JSON/structured data mid-line.
+            if len(data_str) > _MAX_FULL_OUTPUT:
+                cut_at = data_str.rfind("\n", 0, _MAX_FULL_OUTPUT)
+                if cut_at < _MAX_FULL_OUTPUT // 2:
+                    cut_at = _MAX_FULL_OUTPUT  # No good line break, raw truncate
+                data_str = data_str[:cut_at] + f"\n... [{len(data_str) - cut_at} chars truncated]"
+
+            tokens = estimate_tokens(data_str)
 
             return ToolResult(
                 success=True,

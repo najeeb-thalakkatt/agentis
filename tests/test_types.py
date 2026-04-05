@@ -65,6 +65,8 @@ class TestLifecycleEvent:
         expected = {
             "SESSION_START",
             "SESSION_END",
+            "ON_TURN_START",
+            "ON_TURN_END",
             "PRE_TOOL_USE",
             "POST_TOOL_USE",
             "PRE_LLM_CALL",
@@ -76,7 +78,7 @@ class TestLifecycleEvent:
         assert expected == actual
 
     def test_count(self) -> None:
-        assert len(LifecycleEvent) == 8
+        assert len(LifecycleEvent) == 10
 
 
 # ── Dataclass tests ─────────────────────────────────────────

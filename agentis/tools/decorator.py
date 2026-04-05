@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Any, Callable, Coroutine
+
+logger = logging.getLogger("agentis")
 
 from agentis.tools.base import FunctionTool
 from agentis.types import Permission
@@ -23,6 +26,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     permission: Permission = Permission.READ_ONLY,
+    use_utility: bool = False,
 ) -> Callable[[Callable[..., Coroutine[Any, Any, Any]]], FunctionTool]:
     """Decorator that wraps an async function into a FunctionTool.
 
@@ -30,6 +34,8 @@ def tool(
         name: Tool name. Defaults to the function name.
         description: Tool description. Defaults to the function's docstring.
         permission: Permission level. Defaults to READ_ONLY.
+        use_utility: If True, this tool's result analysis can be routed
+            through the cheaper utility provider instead of the primary one.
 
     Returns:
         A decorator that returns a FunctionTool instance.
@@ -53,6 +59,7 @@ def tool(
             description=tool_description,
             permission=permission,
             parameter_schema=parameter_schema,
+            use_utility=use_utility,
         )
 
     return decorator
@@ -125,4 +132,5 @@ def _python_type_to_json(hint: Any) -> str | None:
         if origin in _TYPE_MAP:
             return _TYPE_MAP[origin]
 
+    logger.debug("Unknown type hint %r — defaulting to 'string' in JSON Schema", hint)
     return "string"  # safe fallback

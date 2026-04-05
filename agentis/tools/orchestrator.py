@@ -110,7 +110,17 @@ class ToolOrchestrator:
 
         async def _run(index: int, call: ToolCall) -> None:
             tool = self._tools[call.name]
-            results[index] = await tool.execute(**call.arguments)
+            try:
+                results[index] = await tool.execute(**call.arguments)
+            except Exception as e:
+                results[index] = ToolResult(
+                    success=False,
+                    data=None,
+                    summary=f"Tool '{call.name}' failed: {e}",
+                    full_output="",
+                    tokens_used=5,
+                    error=str(e),
+                )
 
         async with asyncio.TaskGroup() as tg:
             for i, call in enumerate(calls):

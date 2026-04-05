@@ -7,6 +7,7 @@ Two implementations:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -69,7 +70,7 @@ class FileMailbox:
     async def send(self, to: str, message: dict[str, Any]) -> None:
         """Send a message to an agent's mailbox directory."""
         agent_dir = self._safe_agent_dir(to)
-        os.makedirs(agent_dir, exist_ok=True)
+        await asyncio.to_thread(os.makedirs, agent_dir, exist_ok=True)
 
         # Use timestamp-based filename for ordering
         filename = f"{time.time_ns()}.json"
@@ -79,21 +80,38 @@ class FileMailbox:
             await f.write(json.dumps(message))
 
     async def receive(self, agent_name: str) -> list[dict[str, Any]]:
-        """Receive and consume all pending messages."""
+        """Receive and consume all pending messages.
+
+        Uses rename-before-read to avoid read-then-delete races under
+        concurrent access. If another process renames the same file,
+        the FileNotFoundError is caught and the message is skipped.
+        """
         agent_dir = self._safe_agent_dir(agent_name)
         if not agent_dir.exists():
             return []
 
         messages: list[dict[str, Any]] = []
         for filepath in sorted(agent_dir.iterdir()):
-            if filepath.suffix == ".json":
+            if filepath.suffix != ".json":
+                continue
+            # Atomically claim the file by renaming it
+            claimed = filepath.with_suffix(".claimed")
+            try:
+                await asyncio.to_thread(os.rename, filepath, claimed)
+            except FileNotFoundError:
+                continue  # Another process already claimed it
+
+            try:
+                async with aiofiles.open(claimed, "r") as f:
+                    content = await f.read()
+                messages.append(json.loads(content))
+            except Exception as e:
+                logger.warning("Failed to read mailbox message %s: %s", claimed, e)
+            finally:
                 try:
-                    async with aiofiles.open(filepath, "r") as f:
-                        content = await f.read()
-                    messages.append(json.loads(content))
-                    os.remove(filepath)
-                except Exception as e:
-                    logger.warning("Failed to read mailbox message %s: %s", filepath, e)
+                    await asyncio.to_thread(os.remove, claimed)
+                except FileNotFoundError:
+                    pass
 
         return messages
 
@@ -122,8 +140,8 @@ class FileMailbox:
             return
 
         for filepath in agent_dir.iterdir():
-            if filepath.suffix == ".json":
+            if filepath.suffix in (".json", ".claimed"):
                 try:
-                    os.remove(filepath)
+                    await asyncio.to_thread(os.remove, filepath)
                 except OSError:
                     pass

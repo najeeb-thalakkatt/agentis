@@ -13,8 +13,9 @@ if TYPE_CHECKING:
     from agentis.memory.index import MemoryIndex
     from agentis.types import ToolResult
 
-# Tools that fetch fresh data — no need to verify before using
-_READ_TOOLS = frozenset({
+# Default tools that fetch fresh data — no need to verify before using.
+# Users can extend this via SkepticalMemory(extra_read_tools={"my_tool"}).
+_DEFAULT_READ_TOOLS = frozenset({
     "file_read", "grep", "glob", "list_directory",
     "recall", "search_db", "http_get",
 })
@@ -46,8 +47,13 @@ is especially unreliable after context compaction.
 Only trust information you have verified in the current turn. Stale memory
 from earlier turns may be outdated or changed since you last read it."""
 
-    def __init__(self, verify_after_turns: int = 5) -> None:
+    def __init__(
+        self,
+        verify_after_turns: int = 5,
+        extra_read_tools: set[str] | None = None,
+    ) -> None:
         self._verify_after_turns = verify_after_turns
+        self._read_tools = _DEFAULT_READ_TOOLS | (extra_read_tools or set())
 
     def get_verification_prompt(self) -> str:
         """Return the skeptical memory system prompt addition."""
@@ -94,7 +100,7 @@ from earlier turns may be outdated or changed since you last read it."""
         Returns:
             True if the agent should re-read/verify before proceeding.
         """
-        if tool_name in _READ_TOOLS:
+        if tool_name in self._read_tools:
             return False
 
         return context_age_turns >= self._verify_after_turns

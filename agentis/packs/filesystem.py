@@ -9,6 +9,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import aiofiles
@@ -57,7 +58,7 @@ async def file_write(path: str, content: str) -> bool:
         content: Content to write.
     """
     try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        await asyncio.to_thread(os.makedirs, os.path.dirname(path) or ".", exist_ok=True)
         async with aiofiles.open(path, "w") as f:
             await f.write(content)
         return True
@@ -98,7 +99,7 @@ async def list_directory(path: str) -> list[str]:
         path: Directory path to list.
     """
     try:
-        entries = sorted(os.listdir(path))
+        entries = sorted(await asyncio.to_thread(os.listdir, path))
         return entries
     except FileNotFoundError:
         raise FileNotFoundError(f"Directory not found: {path}")

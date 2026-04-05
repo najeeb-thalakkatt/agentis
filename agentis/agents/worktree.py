@@ -48,7 +48,8 @@ class WorktreeAgent:
         Returns:
             The agent's text response, or an error message.
         """
-        await self._isolation.setup()
+        workspace = await self._isolation.setup()
+        logger.info("WorktreeAgent '%s' workspace: %s", self.name, workspace)
 
         try:
             result = await self._runtime.run(task)

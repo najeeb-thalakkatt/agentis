@@ -11,12 +11,15 @@ step() is the primitive; run() and steps() are built on it.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from agentis.compaction.compactor import ContextCompactor
+from agentis.token_utils import estimate_tokens
 from agentis.compaction.dedup import FileDeduplicator
+from agentis.guardrails import ModelGuardrails
 from agentis.hooks.registry import HookRegistry
 from agentis.memory.index import MemoryIndex
 from agentis.memory.recall_tool import RecallTool
@@ -25,10 +28,12 @@ from agentis.runtime.session import Session
 from agentis.tools.orchestrator import ToolOrchestrator
 from agentis.types import (
     ApprovalRequest,
+    ContextEntry,
     HookAction,
     HookContext,
     LifecycleEvent,
     Message,
+    Priority,
     ProviderResponse,
     ToolCall,
     ToolResult,
@@ -72,18 +77,23 @@ class AgentRuntime:
         hooks: HookRegistry | None = None,
         utility_provider: Provider | None = None,
         max_turns: int = 50,
-        max_tokens: int = 0,
+        max_tokens: int | None = None,
         approval_callback: Callable[[ApprovalRequest], Awaitable[bool]] | None = None,
         extensions: list[Extension] | None = None,
         skeptical: bool = True,
+        fast_path_enabled: bool = False,
+        initial_context: dict | None = None,
     ) -> None:
         self._provider = provider
         self._utility_provider = utility_provider
         self._system_prompt = system_prompt
         self._max_turns = max_turns
+        self._max_tokens = max_tokens
         self._approval_callback = approval_callback
         self._extensions = extensions or []
         self._skeptical = skeptical
+        self._fast_path_enabled = fast_path_enabled
+        self._initial_context = initial_context
 
         # Memory
         self._memory = memory or MemoryIndex()
@@ -105,6 +115,7 @@ class AgentRuntime:
         self._compactor = ContextCompactor(
             max_tokens=max_ctx,
             utility_provider=utility_provider or provider,
+            memory=self._memory,
         )
 
         # Dedup
@@ -129,15 +140,31 @@ class AgentRuntime:
             last_content = step_result.response.content
         return last_content
 
-    async def step(self, user_message: str) -> StepResult:
+    async def step(self, user_message: str, _fast_path_candidate: bool = False) -> StepResult:
         """Execute a single step: one LLM call + tool execution.
 
         Args:
             user_message: The user's input message.
+            _fast_path_candidate: Internal flag. When True and the LLM
+                responds without tool calls, skip compaction and extensions.
 
         Returns:
             StepResult with the LLM response and any tool results.
         """
+        # Inject initial_context into the first user message if provided
+        if self._initial_context and self._session.turn_count == 0:
+            import json
+            ctx_str = json.dumps(self._initial_context, indent=2, default=str)
+            user_message = (
+                f"{user_message}\n\n"
+                f"--- Pre-fetched Context ---\n{ctx_str}"
+            )
+
+        # Fire turn start
+        self._fire_hook(LifecycleEvent.ON_TURN_START, metadata={
+            "turn_number": self._session.turn_count,
+        })
+
         # Add user message to session
         self._session.add_message(Message(role="user", content=user_message))
 
@@ -175,11 +202,30 @@ class AgentRuntime:
 
             # Add tool results to session
             for tc, tr in zip(response.tool_calls, tool_results):
+                # Use full_output (actual data) so the LLM can reason about results.
+                # Fall back to summary for errors or when full_output is empty.
+                content = tr.full_output or tr.summary or str(tr.data)
                 self._session.add_message(Message(
                     role="tool",
-                    content=tr.summary if tr.summary else str(tr.data),
-                    metadata={"tool_use_id": tc.id, "tool_call_id": tc.id},
+                    content=content,
+                    metadata={"tool_use_id": tc.id, "tool_call_id": tc.id, "tool_name": tc.name},
                 ))
+
+        is_final = not response.tool_calls
+
+        # Fast path: if this is the first turn, fast_path is enabled,
+        # and the LLM responded without tool calls, skip overhead
+        if _fast_path_candidate and is_final:
+            self._session.increment_turn()
+            self._fire_hook(LifecycleEvent.ON_TURN_END, metadata={
+                "turn_number": self._session.turn_count, "is_final": True,
+            })
+            return StepResult(
+                response=response,
+                tool_results=tool_results,
+                is_final=True,
+                turn_number=self._session.turn_count,
+            )
 
         # Increment turn
         self._session.increment_turn()
@@ -190,7 +236,11 @@ class AgentRuntime:
         # Notify extensions
         await self._notify_extensions_turn_end(response)
 
-        is_final = not response.tool_calls
+        # Fire turn end
+        self._fire_hook(LifecycleEvent.ON_TURN_END, metadata={
+            "turn_number": self._session.turn_count, "is_final": is_final,
+        })
+
         return StepResult(
             response=response,
             tool_results=tool_results,
@@ -205,12 +255,22 @@ class AgentRuntime:
         Stops when the LLM returns no tool calls or max_turns is reached.
         """
         # First step uses the user message
-        result = await self.step(user_message)
+        result = await self.step(
+            user_message,
+            _fast_path_candidate=self._fast_path_enabled,
+        )
         yield result
 
         # Continue while LLM wants to call tools
         turns = 1
         while not result.is_final and turns < self._max_turns:
+            # Check if any CostTracker extension signals stall
+            conclude_msg = self._check_cost_stall()
+            if conclude_msg:
+                result = await self.step(conclude_msg)
+                yield result
+                break
+
             # Feed tool results back (step adds them to session already)
             # Next step with empty user message to continue the loop
             result = await self._continue_step()
@@ -237,9 +297,12 @@ class AgentRuntime:
             hooks=self._hooks,
             utility_provider=self._utility_provider,
             max_turns=self._max_turns,
+            max_tokens=self._max_tokens,
             approval_callback=self._approval_callback,
             extensions=self._extensions,
             skeptical=self._skeptical,
+            fast_path_enabled=self._fast_path_enabled,
+            initial_context=self._initial_context,
         )
         forked._session = self._session.fork()
         return forked
@@ -253,6 +316,12 @@ class AgentRuntime:
         # System prompt
         if self._system_prompt:
             messages.append(Message(role="system", content=self._system_prompt))
+
+        # Model-adaptive guardrails
+        tier = self._provider.capabilities().model_tier
+        guardrail_prompt = ModelGuardrails.get_prompt(tier)
+        if guardrail_prompt:
+            messages.append(Message(role="system", content=guardrail_prompt))
 
         # Skeptical memory prompt (Pattern 5)
         if self._skeptical:
@@ -272,6 +341,10 @@ class AgentRuntime:
 
     async def _continue_step(self) -> StepResult:
         """Continue the agent loop after tool execution (no new user message)."""
+        self._fire_hook(LifecycleEvent.ON_TURN_START, metadata={
+            "turn_number": self._session.turn_count,
+        })
+
         messages = self._assemble_context()
 
         self._fire_hook(LifecycleEvent.PRE_LLM_CALL)
@@ -298,20 +371,26 @@ class AgentRuntime:
         if response.tool_calls:
             tool_results = await self._execute_tool_calls(response.tool_calls)
             for tc, tr in zip(response.tool_calls, tool_results):
+                content = tr.full_output or tr.summary or str(tr.data)
                 self._session.add_message(Message(
                     role="tool",
-                    content=tr.summary if tr.summary else str(tr.data),
-                    metadata={"tool_use_id": tc.id, "tool_call_id": tc.id},
+                    content=content,
+                    metadata={"tool_use_id": tc.id, "tool_call_id": tc.id, "tool_name": tc.name},
                 ))
 
         self._session.increment_turn()
         await self._maybe_compact()
         await self._notify_extensions_turn_end(response)
 
+        is_final = not response.tool_calls
+        self._fire_hook(LifecycleEvent.ON_TURN_END, metadata={
+            "turn_number": self._session.turn_count, "is_final": is_final,
+        })
+
         return StepResult(
             response=response,
             tool_results=tool_results,
-            is_final=not response.tool_calls,
+            is_final=is_final,
             turn_number=self._session.turn_count,
         )
 
@@ -417,10 +496,117 @@ class AgentRuntime:
 
         return wrapped
 
+    def _check_cost_stall(self) -> str | None:
+        """Check if any CostTracker extension signals a stall.
+
+        Returns:
+            A conclude message to inject, or None if no stall detected.
+        """
+        from agentis.extensions.cost_tracker import CostTracker
+
+        for ext in self._extensions:
+            if isinstance(ext, CostTracker) and ext.should_force_conclude:
+                return ext.force_conclude_message
+        return None
+
     async def _maybe_compact(self) -> None:
-        """Run compaction if context is over threshold."""
+        """Sync session messages into compactor, run compaction, sync back.
+
+        The compactor operates on ContextEntry objects with priorities.
+        We convert session Messages -> ContextEntries before compaction,
+        then rebuild the session from surviving entries.
+        """
+        # Sync session messages into compactor entries
+        self._sync_session_to_compactor()
+
         self._fire_hook(LifecycleEvent.PRE_COMPACT)
-        await self._compactor.compact()
+        result = await self._compactor.compact()
+
+        # If compaction actually ran, sync the compacted entries back
+        if result.layers_run > 0:
+            self._sync_compactor_to_session()
+            logger.info(
+                "Compaction applied: %d layers, freed %d tokens, removed %d entries",
+                result.layers_run, result.tokens_freed, result.entries_removed,
+            )
+
+    def _sync_session_to_compactor(self) -> None:
+        """Convert session messages to compactor ContextEntries."""
+        self._compactor._entries.clear()
+        now = time.time()
+        messages = self._session.get_messages()
+
+        for i, msg in enumerate(messages):
+            # Assign priority based on message role and recency
+            age = len(messages) - i  # Higher = older
+            if msg.role == "system":
+                priority = Priority.CRITICAL
+                entry_type = "conversation"
+            elif msg.role == "tool":
+                # Memory-anchor turns (remember tool results) get CRITICAL priority
+                # so compaction never summarizes the evidence of what was saved.
+                # Uses structural metadata check, not content string matching.
+                if msg.metadata.get("tool_name") == "remember":
+                    priority = Priority.CRITICAL
+                # Recent tool results are HIGH, older ones MEDIUM
+                elif age <= 6:
+                    priority = Priority.HIGH
+                else:
+                    priority = Priority.MEDIUM
+                entry_type = "tool_result"
+            elif msg.role == "assistant":
+                priority = Priority.MEDIUM if age > 8 else Priority.HIGH
+                entry_type = "conversation"
+            else:  # user
+                priority = Priority.MEDIUM if age > 8 else Priority.HIGH
+                entry_type = "conversation"
+
+            token_count = estimate_tokens(msg.content)
+            # Carry the original role in metadata so _sync_compactor_to_session
+            # can restore it exactly. Without this, all conversation entries
+            # become role="assistant" after compaction — breaking message alternation.
+            entry_metadata = dict(msg.metadata) if msg.metadata else {}
+            entry_metadata["_original_role"] = msg.role
+            self._compactor.add_entry(ContextEntry(
+                content=msg.content,
+                priority=priority,
+                token_count=token_count,
+                timestamp=now - age,  # Older messages get earlier timestamps
+                entry_type=entry_type,
+                metadata=entry_metadata,
+            ))
+
+    def _sync_compactor_to_session(self) -> None:
+        """Rebuild session messages from compacted entries.
+
+        Uses ``_original_role`` from entry metadata to restore correct
+        message roles. Without this, compaction would corrupt conversation
+        by making all entries role="assistant".
+        """
+        entries = self._compactor.get_entries()
+        new_messages: list[Message] = []
+
+        for entry in entries:
+            # Restore original role from metadata, with sensible fallbacks
+            original_role = entry.metadata.get("_original_role", "")
+
+            if entry.entry_type == "summary":
+                new_messages.append(Message(role="system", content=entry.content))
+            elif entry.entry_type == "tool_result":
+                new_messages.append(Message(
+                    role="tool", content=entry.content, metadata=entry.metadata,
+                ))
+            elif original_role:
+                # Preserved role from before compaction
+                new_messages.append(Message(
+                    role=original_role, content=entry.content, metadata=entry.metadata,
+                ))
+            else:
+                # Fallback for entries created by compaction layers (no original role)
+                new_messages.append(Message(role="assistant", content=entry.content))
+
+        # Replace session messages with compacted ones
+        self._session._messages = new_messages
 
     async def _notify_extensions_turn_end(self, response: ProviderResponse) -> None:
         """Notify extensions after each turn. Failures are logged, not raised."""

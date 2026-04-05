@@ -9,6 +9,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import os
 import re
@@ -29,6 +30,11 @@ async def grep(pattern: str, path: str = ".", max_results: int = 50) -> list[dic
     Returns:
         List of match dicts with file, line_number, and line content.
     """
+    return await asyncio.to_thread(_grep_sync, pattern, path, max_results)
+
+
+def _grep_sync(pattern: str, path: str, max_results: int) -> list[dict[str, str]]:
+    """Synchronous grep implementation, run via to_thread."""
     if not os.path.exists(path):
         raise FileNotFoundError(f"Path not found: {path}")
 
@@ -85,6 +91,11 @@ async def glob(pattern: str, path: str = ".") -> list[str]:
     Returns:
         List of matching file paths.
     """
+    return await asyncio.to_thread(_glob_sync, pattern, path)
+
+
+def _glob_sync(pattern: str, path: str) -> list[str]:
+    """Synchronous glob implementation, run via to_thread."""
     if not os.path.exists(path):
         raise FileNotFoundError(f"Path not found: {path}")
 

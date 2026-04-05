@@ -79,10 +79,11 @@ Output an updated memory summary."""
         if idle_seconds < self._idle_threshold:
             return
 
-        memory_content = self._memory.get_context_payload().content
         if not self._memory.entries:
+            logger.debug("Dream: skipping consolidation — memory is empty")
             return
 
+        memory_content = self._memory.get_context_payload().content
         result = await self.consolidate(
             session_logs="",
             current_memory=memory_content,
