@@ -10,10 +10,23 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import os
 
 from agentis.tools.base import FunctionTool
 from agentis.tools.decorator import tool
 from agentis.types import Permission
+
+# Environment variables to strip from subprocess environment
+_SENSITIVE_ENV_KEYS = frozenset({
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
+    "DATABASE_URL", "SECRET_KEY", "PRIVATE_KEY",
+})
+
+
+def _safe_env() -> dict[str, str]:
+    """Return a copy of the environment with sensitive keys removed."""
+    return {k: v for k, v in os.environ.items() if k not in _SENSITIVE_ENV_KEYS}
 
 
 @tool(permission=Permission.DANGEROUS)
@@ -28,6 +41,7 @@ async def bash(command: str, timeout: int = 120) -> str:
         command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=_safe_env(),
     )
     try:
         stdout, stderr = await asyncio.wait_for(

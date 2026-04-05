@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 import aiofiles
 
+from agentis.token_utils import estimate_tokens
+
 logger = logging.getLogger("agentis")
 
 
@@ -95,7 +97,7 @@ class FileDeduplicator:
                 tokens_used=5,
             )
 
-        tokens = len(content) // 3
+        tokens = estimate_tokens(content)
 
         # Large file? Return preview only
         if tokens > self._max_inline:
@@ -109,7 +111,7 @@ class FileDeduplicator:
                 status="large_file",
                 content=None,
                 preview=preview,
-                tokens_used=len(preview) // 3,
+                tokens_used=estimate_tokens(preview),
             )
 
         # Small file — return inline
@@ -135,11 +137,14 @@ class FileDeduplicator:
 
     @staticmethod
     async def _hash_file(path: str) -> str:
-        """Compute MD5 hash of a file."""
-        h = hashlib.md5()
+        """Compute SHA256 hash of a file using chunked reads."""
+        h = hashlib.sha256()
         async with aiofiles.open(path, "rb") as f:
-            content = await f.read()
-            h.update(content)
+            while True:
+                chunk = await f.read(65536)  # 64KB chunks
+                if not chunk:
+                    break
+                h.update(chunk)
         return h.hexdigest()
 
     @staticmethod

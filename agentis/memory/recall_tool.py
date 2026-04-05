@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from agentis.protocols import ToolSchema
+from agentis.token_utils import estimate_tokens
 from agentis.types import Permission, ToolResult
 
 if TYPE_CHECKING:
@@ -38,7 +40,7 @@ class RecallTool:
                 "properties": {
                     "topic_id": {
                         "type": "string",
-                        "description": "The 8-character topic ID from the memory index.",
+                        "description": "The topic ID from the memory index.",
                     },
                 },
                 "required": ["topic_id"],
@@ -79,12 +81,20 @@ class RecallTool:
             )
 
         # Estimate tokens
-        tokens = len(content) // 3
+        tokens = estimate_tokens(content)
+
+        # Add freshness metadata
+        freshness_suffix = ""
+        age_label = "unknown time"
+        pointer = self._memory._pointers.get(topic_id)
+        if pointer and pointer.created_at > 0:
+            age_label = self._memory._format_age(time.time() - pointer.created_at)
+            freshness_suffix = f"\n\n[Memory saved {age_label}]"
 
         return ToolResult(
             success=True,
             data=content,
-            summary=f"Recalled topic {topic_id} ({tokens} tokens)",
-            full_output=content,
+            summary=f"Recalled topic {topic_id} ({tokens} tokens, saved {age_label})",
+            full_output=content + freshness_suffix,
             tokens_used=tokens,
         )

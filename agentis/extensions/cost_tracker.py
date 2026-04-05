@@ -89,8 +89,16 @@ class CostTracker:
 
         # Stall detection: check tool calls in this turn's response
         tool_calls = getattr(result, "tool_calls", None) or []
-        tool_names = [tc.name for tc in tool_calls if hasattr(tc, "name")]
-        self._record_turn_for_stall(tool_names, self._total_cost)
+        tool_signatures: list[str] = []
+        for tc in tool_calls:
+            if hasattr(tc, "name"):
+                # Use (name, sorted args) as a signature — same tool with
+                # different arguments counts as progress, not a stall.
+                args_key = ""
+                if hasattr(tc, "arguments") and tc.arguments:
+                    args_key = str(sorted(tc.arguments.items()))
+                tool_signatures.append(f"{tc.name}:{args_key}")
+        self._record_turn_for_stall(tool_signatures, self._total_cost)
 
     async def on_idle(self, runtime: Any, idle_seconds: float) -> None:
         """No-op for cost tracker."""
@@ -169,8 +177,15 @@ class CostTracker:
 
     @property
     def should_force_conclude(self) -> bool:
-        """Whether the runtime should force the agent to conclude."""
-        return self._should_force_conclude
+        """Whether the runtime should force the agent to conclude.
+
+        This is a consume-once flag: reading it resets the signal so
+        subsequent calls return False until a new stall is detected.
+        """
+        if self._should_force_conclude:
+            self._should_force_conclude = False
+            return True
+        return False
 
     @property
     def force_conclude_message(self) -> str:

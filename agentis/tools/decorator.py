@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Any, Callable, Coroutine
+
+logger = logging.getLogger("agentis")
 
 from agentis.tools.base import FunctionTool
 from agentis.types import Permission
@@ -129,4 +132,5 @@ def _python_type_to_json(hint: Any) -> str | None:
         if origin in _TYPE_MAP:
             return _TYPE_MAP[origin]
 
+    logger.debug("Unknown type hint %r — defaulting to 'string' in JSON Schema", hint)
     return "string"  # safe fallback

@@ -7,6 +7,7 @@ import logging
 from typing import Any, Callable, Coroutine
 
 from agentis.protocols import ToolSchema
+from agentis.token_utils import estimate_tokens
 from agentis.types import Permission, ToolResult
 
 logger = logging.getLogger("agentis")
@@ -65,12 +66,15 @@ class FunctionTool:
             except (TypeError, ValueError):
                 data_str = str(data)
 
-            # Truncate large outputs to prevent context bloat
+            # Truncate large outputs to prevent context bloat.
+            # Cut at a line boundary to avoid splitting JSON/structured data mid-line.
             if len(data_str) > _MAX_FULL_OUTPUT:
-                truncated = data_str[:_MAX_FULL_OUTPUT]
-                data_str = truncated + f"\n... [{len(data_str) - _MAX_FULL_OUTPUT} chars truncated]"
+                cut_at = data_str.rfind("\n", 0, _MAX_FULL_OUTPUT)
+                if cut_at < _MAX_FULL_OUTPUT // 2:
+                    cut_at = _MAX_FULL_OUTPUT  # No good line break, raw truncate
+                data_str = data_str[:cut_at] + f"\n... [{len(data_str) - cut_at} chars truncated]"
 
-            tokens = len(data_str) // 3
+            tokens = estimate_tokens(data_str)
 
             return ToolResult(
                 success=True,

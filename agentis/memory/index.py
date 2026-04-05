@@ -6,6 +6,7 @@ Actual content lives in per-topic files fetched on demand via recall().
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -45,9 +46,13 @@ class MemoryIndex:
         self._topics_dir = self._workspace / "topics"
         self._index_path = self._workspace / "MEMORY.md"
         self._pointers: dict[str, MemoryPointer] = {}
+        self._dirs_ensured = False
 
-        # Ensure directories exist
-        os.makedirs(self._topics_dir, exist_ok=True)
+    def _ensure_dirs(self) -> None:
+        """Ensure workspace directories exist (lazy, called once)."""
+        if not self._dirs_ensured:
+            os.makedirs(self._topics_dir, exist_ok=True)
+            self._dirs_ensured = True
 
     @property
     def entries(self) -> list[MemoryPointer]:
@@ -72,10 +77,13 @@ class MemoryIndex:
             tags: Optional tags for search/filtering.
 
         Returns:
-            The topic_id (8-char hex string).
+            The topic_id (12-char hex string).
         """
         topic_id = self._generate_topic_id(topic)
         topic_path = self._topics_dir / f"{topic_id}.md"
+
+        # Ensure directories exist before first write
+        await asyncio.to_thread(self._ensure_dirs)
 
         # Write full content to topic file
         async with aiofiles.open(topic_path, "w") as f:
@@ -98,7 +106,7 @@ class MemoryIndex:
         """Fetch full content for a topic by its ID.
 
         Args:
-            topic_id: The 8-char hex ID returned by remember().
+            topic_id: The 12-char hex ID returned by remember().
 
         Returns:
             The full topic content, or None if not found.
@@ -151,10 +159,10 @@ class MemoryIndex:
 
         del self._pointers[topic_id]
 
-        # Remove topic file
+        # Remove topic file (non-blocking)
         topic_path = self._topics_dir / f"{topic_id}.md"
         try:
-            os.remove(topic_path)
+            await asyncio.to_thread(os.remove, topic_path)
         except FileNotFoundError:
             pass
 
@@ -165,16 +173,35 @@ class MemoryIndex:
         """Build the memory index message for LLM context.
 
         Returns a system message containing compact pointers (~150 chars each).
+        Includes freshness indicator when timestamps are available.
         """
         lines = ["Your memory index (use recall tool to fetch details):\n"]
+        now = time.time()
         for ptr in self.entries:
             tag_str = f" [{', '.join(ptr.tags)}]" if ptr.tags else ""
-            lines.append(f"- {ptr.topic}: ./{ptr.file_path}{tag_str}")
+            age_str = ""
+            if ptr.created_at > 0:
+                age_str = f" (saved {self._format_age(now - ptr.created_at)})"
+            lines.append(f"- {ptr.topic}: ./{ptr.file_path}{age_str}{tag_str}")
 
         if len(self._pointers) == 0:
             lines.append("(empty)")
 
         return Message(role="system", content="\n".join(lines))
+
+    @staticmethod
+    def _format_age(seconds: float) -> str:
+        """Format an age in seconds as a human-readable string."""
+        if seconds < 60:
+            return "just now"
+        if seconds < 3600:
+            mins = int(seconds // 60)
+            return f"{mins}m ago"
+        if seconds < 86400:
+            hours = int(seconds // 3600)
+            return f"{hours}h ago"
+        days = int(seconds // 86400)
+        return f"{days}d ago"
 
     async def load(self) -> None:
         """Load the index from disk.
@@ -203,30 +230,52 @@ class MemoryIndex:
         lines = ["# Agent Memory Index\n"]
         for ptr in self.entries:
             tag_str = f" [{', '.join(ptr.tags)}]" if ptr.tags else ""
-            lines.append(f"- {ptr.topic}: ./{ptr.file_path}{tag_str}")
+            ts_str = f" @{ptr.created_at:.2f}" if ptr.created_at > 0 else ""
+            lines.append(f"- {ptr.topic}: ./{ptr.file_path}{ts_str}{tag_str}")
 
         async with aiofiles.open(self._index_path, "w") as f:
             await f.write("\n".join(lines) + "\n")
 
     def _parse_index_line(self, line: str) -> None:
-        """Parse a single line from MEMORY.md back into a MemoryPointer."""
-        # Format: "- Topic Name: ./topics/abcd1234.md [tag1, tag2]"
+        """Parse a single line from MEMORY.md back into a MemoryPointer.
+
+        Format: ``- Topic Name: ./topics/abcd1234.md @1234567890.12 [tag1, tag2]``
+        The ``@timestamp`` and ``[tags]`` parts are optional.  Topic names may
+        contain ``@`` or ``[`` characters — parsing anchors on ``: ./`` and
+        the ``.md`` suffix to avoid ambiguity.
+        """
         line = line[2:]  # strip "- "
 
-        # Extract tags if present
-        tags: list[str] = []
-        if " [" in line and line.endswith("]"):
-            bracket_start = line.rindex(" [")
-            tag_str = line[bracket_start + 2:-1]
-            tags = [t.strip() for t in tag_str.split(",")]
-            line = line[:bracket_start]
-
-        # Split topic and path
+        # Split topic from path+metadata on the first ": ./"
         if ": ./" not in line:
             return
-        topic, file_path = line.split(": ./", 1)
+        topic, rest = line.split(": ./", 1)
 
-        # Extract topic_id from file_path (e.g., "topics/abcd1234.md" -> "abcd1234")
+        # The file path ends at ".md". Everything after is metadata.
+        md_idx = rest.find(".md")
+        if md_idx < 0:
+            return
+        file_path = rest[:md_idx + 3]  # e.g. "topics/abcd1234.md"
+        suffix = rest[md_idx + 3:]     # e.g. " @1234567890.12 [tag1, tag2]"
+
+        # Extract tags from suffix (always at the end)
+        tags: list[str] = []
+        if " [" in suffix and suffix.endswith("]"):
+            bracket_start = suffix.rindex(" [")
+            tag_str = suffix[bracket_start + 2:-1]
+            tags = [t.strip() for t in tag_str.split(",")]
+            suffix = suffix[:bracket_start]
+
+        # Extract timestamp from suffix
+        created_at = 0.0
+        if " @" in suffix:
+            at_idx = suffix.rindex(" @")
+            ts_str = suffix[at_idx + 2:]
+            try:
+                created_at = float(ts_str)
+            except ValueError:
+                pass
+
         topic_id = Path(file_path).stem
 
         self._pointers[topic_id] = MemoryPointer(
@@ -234,11 +283,11 @@ class MemoryIndex:
             topic_id=topic_id,
             file_path=file_path,
             tags=tags,
-            created_at=0.0,  # Lost on reload, but order is preserved by file
+            created_at=created_at,
             summary="",
         )
 
     @staticmethod
     def _generate_topic_id(topic: str) -> str:
-        """Generate a deterministic 8-char hex ID from a topic name."""
-        return hashlib.md5(topic.encode()).hexdigest()[:8]
+        """Generate a deterministic 12-char hex ID from a topic name."""
+        return hashlib.sha256(topic.encode()).hexdigest()[:12]

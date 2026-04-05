@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from agentis.agents.fork import ForkAgent
-from agentis.agents.isolation import NoIsolation, TempDirIsolation
+from agentis.agents.isolation import GitWorktreeIsolation, NoIsolation, TempDirIsolation
 from agentis.agents.mailbox import FileMailbox, InMemoryMailbox
 from agentis.agents.teammate import TeammateAgent
 from agentis.agents.worktree import WorktreeAgent
 from agentis.compaction.compactor import CompactionResult, ContextCompactor
 from agentis.guardrails import ModelGuardrails
+from agentis.packs import list_packs, load_pack, load_packs, register_pack
 from agentis.compaction.dedup import DedupResult, FileDeduplicator
 from agentis.errors import (
     AgentisError,
@@ -60,7 +61,7 @@ from agentis.types import (
     ToolResult,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 __all__ = [
     # Version
@@ -117,6 +118,7 @@ __all__ = [
     "TeammateAgent",
     "WorktreeAgent",
     "TempDirIsolation",
+    "GitWorktreeIsolation",
     "NoIsolation",
     "InMemoryMailbox",
     "FileMailbox",
@@ -131,7 +133,14 @@ __all__ = [
     "ProviderError",
     "SessionError",
     "ToolExecutionError",
+    # Packs
+    "list_packs",
+    "load_pack",
+    "load_packs",
+    "register_pack",
     # Utils
     "estimate_messages_tokens",
     "estimate_tokens",
+    # Guardrails
+    "ModelGuardrails",
 ]

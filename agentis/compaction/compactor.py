@@ -10,6 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from agentis.token_utils import estimate_tokens
 from agentis.types import ContextEntry, Message, Priority
 
 logger = logging.getLogger("agentis")
@@ -42,9 +43,11 @@ class ContextCompactor:
         self,
         max_tokens: int = 128_000,
         utility_provider: Any = None,
+        memory: Any = None,
     ) -> None:
         self._max_tokens = max_tokens
         self._utility_provider = utility_provider
+        self._memory = memory  # MemoryIndex for Layer 3 extraction
         self._entries: list[ContextEntry] = []
 
     def current_tokens(self) -> int:
@@ -119,7 +122,7 @@ class ContextCompactor:
                 old_tokens = entry.token_count
                 summary = self._one_line_summary(entry.content)
                 entry.content = summary
-                entry.token_count = len(summary) // 3
+                entry.token_count = estimate_tokens(summary)
                 freed += old_tokens - entry.token_count
         return freed
 
@@ -165,7 +168,7 @@ class ContextCompactor:
             self._entries.pop(idx)
 
         # Insert summary at the beginning
-        summary_tokens = len(summary) // 3
+        summary_tokens = estimate_tokens(summary)
         self._entries.insert(0, ContextEntry(
             content=f"[Earlier conversation summary]\n{summary}",
             priority=Priority.MEDIUM,
@@ -178,27 +181,164 @@ class ContextCompactor:
         return max(freed, 0)
 
     async def _layer3_extract_session_memory(self) -> int:
-        """Layer 3: Extract durable facts to session memory.
+        """Layer 3: Extract durable facts to session memory before eviction.
 
-        Requires utility_provider. Skipped if not available.
+        Asks the utility LLM to pull 2-5 key facts from LOW/MEDIUM entries,
+        saves them to MemoryIndex with [auto-extracted, compaction] tags,
+        then evicts the source entries and leaves a compact marker.
+
+        Requires utility_provider and memory. Skipped if either is missing.
         """
-        if self._utility_provider is None:
+        if self._utility_provider is None or self._memory is None:
             return 0
 
-        # Stub: in a full implementation this would extract facts
-        # and save them to memory, then remove the source entries.
-        return 0
+        # Collect eviction candidates: LOW and MEDIUM priority, non-CRITICAL
+        candidates = [
+            (i, e) for i, e in enumerate(self._entries)
+            if e.priority in (Priority.LOW, Priority.MEDIUM)
+            and e.entry_type in ("conversation", "tool_result")
+        ]
+
+        if len(candidates) < 3:
+            return 0  # Not enough material to extract from
+
+        # Build the content to extract from
+        content_block = "\n---\n".join(e.content for _, e in candidates)
+        old_tokens = sum(e.token_count for _, e in candidates)
+
+        # Ask LLM to extract key facts
+        try:
+            response = await self._utility_provider.complete(
+                messages=[
+                    Message(
+                        role="system",
+                        content=(
+                            "Extract 2-5 key durable facts from the following conversation "
+                            "and tool results. Output ONLY a numbered list of facts. "
+                            "Each fact should be a single sentence capturing something "
+                            "the agent would want to remember in future turns. "
+                            "Focus on: decisions made, errors found, key data points, "
+                            "and current state."
+                        ),
+                    ),
+                    Message(role="user", content=content_block),
+                ],
+                max_tokens=300,
+            )
+            extracted = response.content
+        except Exception as e:
+            logger.warning("Layer 3 fact extraction failed: %s", e)
+            return 0
+
+        if not extracted or len(extracted.strip()) < 10:
+            return 0
+
+        # Save extracted facts to memory
+        try:
+            await self._memory.remember(
+                topic="Session facts (auto-extracted)",
+                content=extracted,
+                tags=["auto-extracted", "compaction"],
+            )
+        except Exception as e:
+            logger.warning("Layer 3 memory save failed: %s", e)
+            return 0
+
+        # Remove the source entries
+        for idx, _ in reversed(candidates):
+            self._entries.pop(idx)
+
+        # Insert a compact marker
+        marker = f"[{len(candidates)} entries extracted to memory — see 'Session facts (auto-extracted)']"
+        marker_tokens = estimate_tokens(marker)
+        self._entries.insert(0, ContextEntry(
+            content=marker,
+            priority=Priority.MEDIUM,
+            token_count=marker_tokens,
+            timestamp=candidates[0][1].timestamp,
+            entry_type="summary",
+        ))
+
+        freed = old_tokens - marker_tokens
+        logger.info("Layer 3: extracted %d facts from %d entries, freed %d tokens",
+                     extracted.count("\n") + 1, len(candidates), freed)
+        return max(freed, 0)
 
     async def _layer4_summarize_full_history(self) -> int:
-        """Layer 4: Nuclear summarization — summarize everything.
+        """Layer 4: Nuclear summarization — compress entire non-CRITICAL context.
+
+        Fires at 90% pressure. Replaces the entire non-CRITICAL conversation
+        with a single 5-8 sentence paragraph preserving the user's goal,
+        decisions made, current state, and blockers.
 
         Requires utility_provider. Skipped if not available.
         """
         if self._utility_provider is None:
             return 0
 
-        # Stub: would summarize entire context into ~500 tokens.
-        return 0
+        # Only fire at high pressure (90%+)
+        if self.current_tokens() < self._max_tokens * 0.90:
+            return 0
+
+        # Collect all non-CRITICAL entries
+        removable = [
+            (i, e) for i, e in enumerate(self._entries)
+            if e.priority != Priority.CRITICAL
+        ]
+
+        if not removable:
+            return 0
+
+        all_content = "\n---\n".join(e.content for _, e in removable)
+        old_tokens = sum(e.token_count for _, e in removable)
+
+        # Ask LLM for nuclear summary
+        try:
+            response = await self._utility_provider.complete(
+                messages=[
+                    Message(
+                        role="system",
+                        content=(
+                            "Compress the following conversation into a single paragraph "
+                            "of 5-8 sentences. Preserve:\n"
+                            "1. The user's original goal/request\n"
+                            "2. Key decisions made so far\n"
+                            "3. Current state (what has been done, what remains)\n"
+                            "4. Any blockers or errors encountered\n"
+                            "5. Important data points or findings\n"
+                            "Output ONLY the summary paragraph, no headers or bullets."
+                        ),
+                    ),
+                    Message(role="user", content=all_content),
+                ],
+                max_tokens=400,
+            )
+            summary = response.content
+        except Exception as e:
+            logger.warning("Layer 4 nuclear summarization failed: %s", e)
+            return 0
+
+        if not summary or len(summary.strip()) < 20:
+            return 0
+
+        # Remove all non-CRITICAL entries
+        for idx, _ in reversed(removable):
+            self._entries.pop(idx)
+
+        # Insert the nuclear summary
+        summary_tokens = estimate_tokens(summary)
+        self._entries.insert(0, ContextEntry(
+            content=f"[Full session summary — nuclear compaction]\n{summary}",
+            priority=Priority.HIGH,
+            token_count=summary_tokens,
+            timestamp=removable[0][1].timestamp,
+            entry_type="summary",
+        ))
+
+        freed = old_tokens - summary_tokens
+        logger.info("Layer 4: nuclear summary, freed %d tokens (%d entries -> 1)",
+                     freed, len(removable))
+        return max(freed, 0)
 
     async def _layer5_truncate_oldest(self) -> int:
         """Layer 5: Drop lowest-priority entries. Last resort.
@@ -231,6 +371,15 @@ class ContextCompactor:
 
     @staticmethod
     def _one_line_summary(content: str) -> str:
-        """Create a one-line summary of content."""
+        """Create a one-line summary preserving the first meaningful line."""
         lines = content.strip().split("\n")
+        # Find the first non-empty line as a content hint
+        first_line = ""
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                first_line = stripped[:80]
+                break
+        if first_line:
+            return f"[{len(lines)} lines] {first_line}"
         return f"[{len(lines)} lines — summarized]"

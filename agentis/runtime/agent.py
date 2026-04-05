@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from agentis.compaction.compactor import ContextCompactor
+from agentis.token_utils import estimate_tokens
 from agentis.compaction.dedup import FileDeduplicator
 from agentis.guardrails import ModelGuardrails
 from agentis.hooks.registry import HookRegistry
@@ -76,7 +77,7 @@ class AgentRuntime:
         hooks: HookRegistry | None = None,
         utility_provider: Provider | None = None,
         max_turns: int = 50,
-        max_tokens: int = 0,
+        max_tokens: int | None = None,
         approval_callback: Callable[[ApprovalRequest], Awaitable[bool]] | None = None,
         extensions: list[Extension] | None = None,
         skeptical: bool = True,
@@ -87,6 +88,7 @@ class AgentRuntime:
         self._utility_provider = utility_provider
         self._system_prompt = system_prompt
         self._max_turns = max_turns
+        self._max_tokens = max_tokens
         self._approval_callback = approval_callback
         self._extensions = extensions or []
         self._skeptical = skeptical
@@ -113,6 +115,7 @@ class AgentRuntime:
         self._compactor = ContextCompactor(
             max_tokens=max_ctx,
             utility_provider=utility_provider or provider,
+            memory=self._memory,
         )
 
         # Dedup
@@ -157,6 +160,11 @@ class AgentRuntime:
                 f"--- Pre-fetched Context ---\n{ctx_str}"
             )
 
+        # Fire turn start
+        self._fire_hook(LifecycleEvent.ON_TURN_START, metadata={
+            "turn_number": self._session.turn_count,
+        })
+
         # Add user message to session
         self._session.add_message(Message(role="user", content=user_message))
 
@@ -200,7 +208,7 @@ class AgentRuntime:
                 self._session.add_message(Message(
                     role="tool",
                     content=content,
-                    metadata={"tool_use_id": tc.id, "tool_call_id": tc.id},
+                    metadata={"tool_use_id": tc.id, "tool_call_id": tc.id, "tool_name": tc.name},
                 ))
 
         is_final = not response.tool_calls
@@ -209,6 +217,9 @@ class AgentRuntime:
         # and the LLM responded without tool calls, skip overhead
         if _fast_path_candidate and is_final:
             self._session.increment_turn()
+            self._fire_hook(LifecycleEvent.ON_TURN_END, metadata={
+                "turn_number": self._session.turn_count, "is_final": True,
+            })
             return StepResult(
                 response=response,
                 tool_results=tool_results,
@@ -224,6 +235,11 @@ class AgentRuntime:
 
         # Notify extensions
         await self._notify_extensions_turn_end(response)
+
+        # Fire turn end
+        self._fire_hook(LifecycleEvent.ON_TURN_END, metadata={
+            "turn_number": self._session.turn_count, "is_final": is_final,
+        })
 
         return StepResult(
             response=response,
@@ -281,6 +297,7 @@ class AgentRuntime:
             hooks=self._hooks,
             utility_provider=self._utility_provider,
             max_turns=self._max_turns,
+            max_tokens=self._max_tokens,
             approval_callback=self._approval_callback,
             extensions=self._extensions,
             skeptical=self._skeptical,
@@ -324,6 +341,10 @@ class AgentRuntime:
 
     async def _continue_step(self) -> StepResult:
         """Continue the agent loop after tool execution (no new user message)."""
+        self._fire_hook(LifecycleEvent.ON_TURN_START, metadata={
+            "turn_number": self._session.turn_count,
+        })
+
         messages = self._assemble_context()
 
         self._fire_hook(LifecycleEvent.PRE_LLM_CALL)
@@ -354,17 +375,22 @@ class AgentRuntime:
                 self._session.add_message(Message(
                     role="tool",
                     content=content,
-                    metadata={"tool_use_id": tc.id, "tool_call_id": tc.id},
+                    metadata={"tool_use_id": tc.id, "tool_call_id": tc.id, "tool_name": tc.name},
                 ))
 
         self._session.increment_turn()
         await self._maybe_compact()
         await self._notify_extensions_turn_end(response)
 
+        is_final = not response.tool_calls
+        self._fire_hook(LifecycleEvent.ON_TURN_END, metadata={
+            "turn_number": self._session.turn_count, "is_final": is_final,
+        })
+
         return StepResult(
             response=response,
             tool_results=tool_results,
-            is_final=not response.tool_calls,
+            is_final=is_final,
             turn_number=self._session.turn_count,
         )
 
@@ -517,8 +543,16 @@ class AgentRuntime:
                 priority = Priority.CRITICAL
                 entry_type = "conversation"
             elif msg.role == "tool":
+                # Memory-anchor turns (remember tool results) get CRITICAL priority
+                # so compaction never summarizes the evidence of what was saved.
+                # Uses structural metadata check, not content string matching.
+                if msg.metadata.get("tool_name") == "remember":
+                    priority = Priority.CRITICAL
                 # Recent tool results are HIGH, older ones MEDIUM
-                priority = Priority.HIGH if age <= 6 else Priority.MEDIUM
+                elif age <= 6:
+                    priority = Priority.HIGH
+                else:
+                    priority = Priority.MEDIUM
                 entry_type = "tool_result"
             elif msg.role == "assistant":
                 priority = Priority.MEDIUM if age > 8 else Priority.HIGH
@@ -527,34 +561,48 @@ class AgentRuntime:
                 priority = Priority.MEDIUM if age > 8 else Priority.HIGH
                 entry_type = "conversation"
 
-            token_count = max(len(msg.content) // 3, 1)
+            token_count = estimate_tokens(msg.content)
+            # Carry the original role in metadata so _sync_compactor_to_session
+            # can restore it exactly. Without this, all conversation entries
+            # become role="assistant" after compaction — breaking message alternation.
+            entry_metadata = dict(msg.metadata) if msg.metadata else {}
+            entry_metadata["_original_role"] = msg.role
             self._compactor.add_entry(ContextEntry(
                 content=msg.content,
                 priority=priority,
                 token_count=token_count,
                 timestamp=now - age,  # Older messages get earlier timestamps
                 entry_type=entry_type,
+                metadata=entry_metadata,
             ))
 
     def _sync_compactor_to_session(self) -> None:
-        """Rebuild session messages from compacted entries."""
+        """Rebuild session messages from compacted entries.
+
+        Uses ``_original_role`` from entry metadata to restore correct
+        message roles. Without this, compaction would corrupt conversation
+        by making all entries role="assistant".
+        """
         entries = self._compactor.get_entries()
         new_messages: list[Message] = []
 
         for entry in entries:
+            # Restore original role from metadata, with sensible fallbacks
+            original_role = entry.metadata.get("_original_role", "")
+
             if entry.entry_type == "summary":
-                # Summaries become system messages
                 new_messages.append(Message(role="system", content=entry.content))
             elif entry.entry_type == "tool_result":
-                new_messages.append(Message(role="tool", content=entry.content))
-            elif entry.entry_type == "conversation":
-                # Try to preserve original role from content hints
-                if entry.content.startswith("[Earlier conversation summary]"):
-                    new_messages.append(Message(role="system", content=entry.content))
-                else:
-                    # Best effort: alternate user/assistant for old entries
-                    new_messages.append(Message(role="assistant", content=entry.content))
+                new_messages.append(Message(
+                    role="tool", content=entry.content, metadata=entry.metadata,
+                ))
+            elif original_role:
+                # Preserved role from before compaction
+                new_messages.append(Message(
+                    role=original_role, content=entry.content, metadata=entry.metadata,
+                ))
             else:
+                # Fallback for entries created by compaction layers (no original role)
                 new_messages.append(Message(role="assistant", content=entry.content))
 
         # Replace session messages with compacted ones

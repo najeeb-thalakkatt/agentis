@@ -40,10 +40,15 @@ class HookAction(Enum):
 
 
 class LifecycleEvent(Enum):
-    """Lifecycle events that hooks can intercept."""
+    """Lifecycle events that hooks can intercept.
+
+    10 events covering session, turn, LLM, tool, compaction, and error boundaries.
+    """
 
     SESSION_START = "session_start"
     SESSION_END = "session_end"
+    ON_TURN_START = "on_turn_start"
+    ON_TURN_END = "on_turn_end"
     PRE_TOOL_USE = "pre_tool_use"
     POST_TOOL_USE = "post_tool_use"
     PRE_LLM_CALL = "pre_llm_call"
@@ -100,6 +105,7 @@ class ContextEntry:
     token_count: int
     timestamp: float
     entry_type: str  # "tool_result", "conversation", "file_read", "summary"
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

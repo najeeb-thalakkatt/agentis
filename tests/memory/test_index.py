@@ -43,7 +43,7 @@ class TestMemoryIndex:
     async def test_remember_returns_topic_id(self, memory: MemoryIndex) -> None:
         topic_id = await memory.remember("Auth system", "Uses JWT tokens")
         assert isinstance(topic_id, str)
-        assert len(topic_id) == 8
+        assert len(topic_id) == 12
 
     @pytest.mark.asyncio
     async def test_remember_deterministic_id(self, memory: MemoryIndex) -> None:
