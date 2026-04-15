@@ -64,7 +64,16 @@ from agentis.types import (
     ToolResult,
 )
 
-__version__ = "0.3.0"
+def _read_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("agentis-ai")
+    except PackageNotFoundError:
+        return "0.0.0+local"
+
+
+__version__ = _read_version()
+del _read_version
 
 __all__ = [
     # Version
