@@ -24,11 +24,40 @@ pip install agentis[all]               # Everything
 
 Requires Python 3.11+.
 
+## Scaffold a new project
+
+```bash
+pip install agentis[anthropic]
+agentis new myagent
+cd myagent
+cp .env.example .env                   # paste your ANTHROPIC_API_KEY
+pip install -e '.[anthropic]'
+python main.py "what is 17 + 25?"
+```
+
+`agentis doctor` prints a diagnostic summary (SDKs installed, env vars set). Exit code 0 means you're ready.
+
+## Environment variables
+
+Each provider declares an env var and exposes `from_env()` for explicit auto-construction:
+
+| Provider | Env var |
+|---|---|
+| `AnthropicProvider` | `ANTHROPIC_API_KEY` |
+| `OpenAIProvider`    | `OPENAI_API_KEY`    |
+
+```python
+from agentis import AnthropicProvider
+provider = AnthropicProvider.from_env()   # raises ConfigError naming the var if missing
+```
+
+Auth, rate-limit, and network failures surface as `AuthenticationError`, `RateLimitError`, and `ProviderNetworkError` (all subclasses of `ProviderError`) — each with an actionable message, not a generic wrap.
+
 ## Quickstart
 
 ```python
 import asyncio
-from agentis import AgentRuntime, tool, Permission
+from agentis import AgentRuntime, AnthropicProvider, tool, Permission
 
 @tool()
 async def lookup_weather(city: str) -> str:
@@ -42,8 +71,7 @@ async def save_report(content: str) -> bool:
     return True
 
 async def main():
-    from agentis import AnthropicProvider  # or OpenAIProvider
-    provider = AnthropicProvider(model="claude-sonnet-4-20250514")
+    provider = AnthropicProvider.from_env()  # reads ANTHROPIC_API_KEY
 
     agent = AgentRuntime(
         provider=provider,

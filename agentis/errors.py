@@ -11,6 +11,18 @@ class ProviderError(AgentisError):
     """An LLM provider call failed."""
 
 
+class AuthenticationError(ProviderError):
+    """The provider rejected the API key."""
+
+
+class RateLimitError(ProviderError):
+    """The provider is rate-limiting requests."""
+
+
+class ProviderNetworkError(ProviderError):
+    """Network-level failure reaching the provider (timeout, DNS, connection reset)."""
+
+
 class ToolExecutionError(AgentisError):
     """A tool execution failed unexpectedly.
 

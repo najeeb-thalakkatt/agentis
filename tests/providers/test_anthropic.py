@@ -18,16 +18,21 @@ from agentis.types import Message
 class TestAnthropicProviderImport:
     def test_raises_config_error_without_sdk(self) -> None:
         """If anthropic SDK isn't installed, construction should raise ConfigError."""
-        with patch.dict("sys.modules", {"anthropic": None}):
-            # Force reimport to trigger the import check
-            import importlib
+        import importlib
 
-            from agentis.providers import anthropic as anth_mod
+        from agentis.providers import anthropic as anth_mod
 
+        try:
+            with patch.dict("sys.modules", {"anthropic": None}):
+                importlib.reload(anth_mod)
+                if not anth_mod._HAS_ANTHROPIC:
+                    with pytest.raises(ConfigError, match="anthropic"):
+                        anth_mod.AnthropicProvider(
+                            model="claude-sonnet-4-6", api_key="sk-test"
+                        )
+        finally:
+            # Restore module state so later tests see the real SDK types.
             importlib.reload(anth_mod)
-            if not anth_mod._HAS_ANTHROPIC:
-                with pytest.raises(ConfigError, match="anthropic"):
-                    anth_mod.AnthropicProvider(model="claude-sonnet-4-6", api_key="sk-test")
 
 
 class TestAnthropicProviderCapabilities:
