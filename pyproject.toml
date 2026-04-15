@@ -2,8 +2,25 @@
 name = "agentis"
 version = "0.3.0"
 description = "Production-grade, provider-agnostic Python framework for building agentic AI systems"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Najeeb Thalakkatt" },
+]
+keywords = ["agents", "llm", "ai", "agentic", "anthropic", "openai", "tools", "framework"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = [
     "aiofiles>=23.0",
 ]
@@ -12,9 +29,9 @@ dependencies = [
 agentis = "agentis.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/najeebthalakkatt/agentis"
-Repository = "https://github.com/najeebthalakkatt/agentis"
-Issues = "https://github.com/najeebthalakkatt/agentis/issues"
+Homepage = "https://github.com/najeeb-thalakkatt/agentis"
+Repository = "https://github.com/najeeb-thalakkatt/agentis"
+Issues = "https://github.com/najeeb-thalakkatt/agentis/issues"
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.30"]
@@ -37,7 +54,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
