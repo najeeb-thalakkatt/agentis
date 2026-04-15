@@ -102,7 +102,7 @@ version = "0.1.0"
 description = "An agentis-powered agent."
 requires-python = ">=3.11"
 dependencies = [
-    "agentis[{extras}]",
+    "agentis-ai[{extras}]",
 ]
 
 [build-system]
@@ -220,7 +220,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     lines.append(f"openai     : {'installed' if has_openai else 'not installed'}")
     if not (has_anthropic or has_openai):
         lines.append(
-            "  hint: install at least one provider — `pip install agentis[anthropic]`"
+            "  hint: install at least one provider — `pip install agentis-ai[anthropic]`"
         )
         failures += 1
 

@@ -1,6 +1,6 @@
 """Shell tool pack — bash command execution.
 
-Install: pip install agentis[shell]  (no extra deps needed)
+Install: pip install agentis-ai[shell]  (no extra deps needed)
 
 Usage:
     from agentis.packs.shell import TOOLS

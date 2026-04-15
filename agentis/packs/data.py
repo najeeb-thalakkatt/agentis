@@ -1,6 +1,6 @@
 """Data tool pack — JSON querying.
 
-Install: pip install agentis[data]  (no extra deps needed)
+Install: pip install agentis-ai[data]  (no extra deps needed)
 
 Usage:
     from agentis.packs.data import TOOLS

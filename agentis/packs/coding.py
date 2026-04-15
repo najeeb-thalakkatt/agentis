@@ -1,6 +1,6 @@
 """Coding tool pack — grep, glob for code search and navigation.
 
-Install: pip install agentis[coding]  (no extra deps needed for these)
+Install: pip install agentis-ai[coding]  (no extra deps needed for these)
 
 Usage:
     from agentis.packs.coding import TOOLS

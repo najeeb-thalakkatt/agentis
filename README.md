@@ -16,10 +16,10 @@ The harness your model is missing. Production-grade, provider-agnostic Python fr
 ## Install
 
 ```bash
-pip install agentis                    # Core (aiofiles only)
-pip install agentis[anthropic]         # + Anthropic SDK
-pip install agentis[openai]            # + OpenAI SDK
-pip install agentis[all]               # Everything
+pip install agentis-ai                 # Core (aiofiles only)
+pip install agentis-ai[anthropic]      # + Anthropic SDK
+pip install agentis-ai[openai]         # + OpenAI SDK
+pip install agentis-ai[all]            # Everything
 ```
 
 Requires Python 3.11+.
@@ -27,7 +27,7 @@ Requires Python 3.11+.
 ## Scaffold a new project
 
 ```bash
-pip install agentis[anthropic]
+pip install agentis-ai[anthropic]
 agentis new myagent
 cd myagent
 cp .env.example .env                   # paste your ANTHROPIC_API_KEY
