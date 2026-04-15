@@ -56,7 +56,7 @@ class AnthropicProvider(BaseProvider):
     """Provider for Anthropic's Claude models.
 
     Supports prompt caching, tool use, and streaming.
-    Requires the ``anthropic`` package: ``pip install agentis[anthropic]``
+    Requires the ``anthropic`` package: ``pip install agentis-ai[anthropic]``
     """
 
     ENV_KEY = "ANTHROPIC_API_KEY"
@@ -71,7 +71,7 @@ class AnthropicProvider(BaseProvider):
         if not _HAS_ANTHROPIC:
             raise ConfigError(
                 "The anthropic SDK is required for AnthropicProvider. "
-                "Install it with: pip install agentis[anthropic]"
+                "Install it with: pip install agentis-ai[anthropic]"
             )
         super().__init__(model=model, api_key=api_key, base_url=base_url, **kwargs)
 

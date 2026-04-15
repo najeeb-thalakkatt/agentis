@@ -1,6 +1,6 @@
 """Web tool pack — HTTP request tools.
 
-Install: pip install agentis[web]  (requires httpx)
+Install: pip install agentis-ai[web]  (requires httpx)
 
 Usage:
     from agentis.packs.web import TOOLS
@@ -30,7 +30,7 @@ async def http_get(url: str, headers: dict[str, str] | None = None) -> dict[str,
     try:
         import httpx
     except ImportError:
-        raise ImportError("httpx is required for web tools: pip install agentis[web]")
+        raise ImportError("httpx is required for web tools: pip install agentis-ai[web]")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(url, headers=headers or {})
@@ -60,7 +60,7 @@ async def http_post(
     try:
         import httpx
     except ImportError:
-        raise ImportError("httpx is required for web tools: pip install agentis[web]")
+        raise ImportError("httpx is required for web tools: pip install agentis-ai[web]")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(url, json=body, headers=headers or {})

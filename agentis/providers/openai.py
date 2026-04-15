@@ -53,7 +53,7 @@ class OpenAIProvider(BaseProvider):
     """Provider for OpenAI models (GPT-4o, etc.).
 
     Supports tool use (function calling) and streaming.
-    Requires the ``openai`` package: ``pip install agentis[openai]``
+    Requires the ``openai`` package: ``pip install agentis-ai[openai]``
     """
 
     ENV_KEY = "OPENAI_API_KEY"
@@ -68,7 +68,7 @@ class OpenAIProvider(BaseProvider):
         if not _HAS_OPENAI:
             raise ConfigError(
                 "The openai SDK is required for OpenAIProvider. "
-                "Install it with: pip install agentis[openai]"
+                "Install it with: pip install agentis-ai[openai]"
             )
         super().__init__(model=model, api_key=api_key, base_url=base_url, **kwargs)
 

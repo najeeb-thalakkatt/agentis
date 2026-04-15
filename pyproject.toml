@@ -1,6 +1,6 @@
 [project]
-name = "agentis"
-version = "1.0.0"
+name = "agentis-ai"
+version = "1.0.1"
 description = "Production-grade, provider-agnostic Python framework for building agentic AI systems"
 readme = "README.md"
 requires-python = ">=3.11"

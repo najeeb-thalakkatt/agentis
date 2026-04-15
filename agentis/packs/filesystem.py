@@ -1,6 +1,6 @@
 """Filesystem tool pack — file_read, file_write, file_edit, list_directory.
 
-Install: pip install agentis[filesystem]  (no extra deps needed)
+Install: pip install agentis-ai[filesystem]  (no extra deps needed)
 
 Usage:
     from agentis.packs.filesystem import TOOLS
