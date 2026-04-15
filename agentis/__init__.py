@@ -13,10 +13,13 @@ from agentis.packs import list_packs, load_pack, load_packs, register_pack
 from agentis.compaction.dedup import DedupResult, FileDeduplicator
 from agentis.errors import (
     AgentisError,
+    AuthenticationError,
     CompactionError,
     ConfigError,
     HookDeniedError,
     ProviderError,
+    ProviderNetworkError,
+    RateLimitError,
     SessionError,
     ToolExecutionError,
 )
@@ -127,10 +130,13 @@ __all__ = [
     "CostTracker",
     # Errors
     "AgentisError",
+    "AuthenticationError",
     "CompactionError",
     "ConfigError",
     "HookDeniedError",
     "ProviderError",
+    "ProviderNetworkError",
+    "RateLimitError",
     "SessionError",
     "ToolExecutionError",
     # Packs

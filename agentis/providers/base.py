@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, ClassVar
 
+from agentis.errors import ConfigError
 from agentis.protocols import ProviderCapabilities, ToolSchema
 from agentis.types import Message, ProviderResponse
 
@@ -21,6 +23,8 @@ class BaseProvider(ABC):
     for rate limits. Subclasses implement provider-specific API calls.
     """
 
+    ENV_KEY: ClassVar[str | None] = None
+
     def __init__(
         self,
         model: str,
@@ -31,6 +35,39 @@ class BaseProvider(ABC):
         self._model = model
         self._api_key = api_key or ""
         self._base_url = base_url
+
+    @classmethod
+    def from_env(cls, **kwargs: Any) -> BaseProvider:
+        """Construct a provider reading the API key from the environment.
+
+        The env var name is declared by each subclass via ``ENV_KEY``. If the
+        variable is missing or empty, a ``ConfigError`` is raised that names
+        the expected variable — no silent fallback.
+
+        Args:
+            **kwargs: Forwarded to the subclass constructor (e.g., ``model``,
+                ``base_url``).
+
+        Returns:
+            An instance of the provider with ``api_key`` populated from
+            ``os.environ[cls.ENV_KEY]``.
+
+        Raises:
+            ConfigError: If ``ENV_KEY`` is not set on the class, or the env
+                var is missing/empty.
+        """
+        if not cls.ENV_KEY:
+            raise ConfigError(
+                f"{cls.__name__} does not declare an ENV_KEY — "
+                "pass api_key= explicitly or use a provider subclass that sets ENV_KEY."
+            )
+        api_key = os.environ.get(cls.ENV_KEY, "").strip()
+        if not api_key:
+            raise ConfigError(
+                f"Environment variable ${cls.ENV_KEY} is not set. "
+                f"Export it (e.g., 'export {cls.ENV_KEY}=...') or pass api_key= explicitly."
+            )
+        return cls(api_key=api_key, **kwargs)
 
     @abstractmethod
     async def complete(

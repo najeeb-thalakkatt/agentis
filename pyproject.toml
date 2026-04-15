@@ -8,6 +8,14 @@ dependencies = [
     "aiofiles>=23.0",
 ]
 
+[project.scripts]
+agentis = "agentis.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/najeebthalakkatt/agentis"
+Repository = "https://github.com/najeebthalakkatt/agentis"
+Issues = "https://github.com/najeebthalakkatt/agentis/issues"
+
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.30"]
 openai = ["openai>=1.0"]

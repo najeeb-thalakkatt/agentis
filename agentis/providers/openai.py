@@ -7,7 +7,13 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from agentis.errors import ConfigError, ProviderError
+from agentis.errors import (
+    AuthenticationError,
+    ConfigError,
+    ProviderError,
+    ProviderNetworkError,
+    RateLimitError,
+)
 from agentis.protocols import ProviderCapabilities, ToolSchema
 from agentis.providers.base import BaseProvider
 from agentis.types import Message, ProviderResponse, TokenUsage, ToolCall
@@ -22,12 +28,35 @@ except ImportError:
     _HAS_OPENAI = False
 
 
+def _map_openai_error(exc: Exception) -> ProviderError:
+    """Map an openai SDK exception to the matching agentis error class."""
+    if not _HAS_OPENAI:
+        return ProviderError(f"OpenAI API error: {exc}")
+    if isinstance(exc, openai.AuthenticationError):
+        return AuthenticationError(
+            "Authentication failed. Check your $OPENAI_API_KEY "
+            "(run `agentis doctor` to verify)."
+        )
+    if isinstance(exc, openai.RateLimitError):
+        return RateLimitError(
+            "OpenAI rate limit hit. The SDK already retried with backoff; "
+            "reduce concurrency or wait before retrying."
+        )
+    if isinstance(exc, openai.APIConnectionError):
+        return ProviderNetworkError(
+            f"Network error reaching OpenAI: {exc}. Check connectivity."
+        )
+    return ProviderError(f"OpenAI API error: {exc}")
+
+
 class OpenAIProvider(BaseProvider):
     """Provider for OpenAI models (GPT-4o, etc.).
 
     Supports tool use (function calling) and streaming.
     Requires the ``openai`` package: ``pip install agentis[openai]``
     """
+
+    ENV_KEY = "OPENAI_API_KEY"
 
     def __init__(
         self,
@@ -85,7 +114,7 @@ class OpenAIProvider(BaseProvider):
         try:
             response = await self._client.chat.completions.create(**kwargs)
         except Exception as e:
-            raise ProviderError(f"OpenAI API error: {e}") from e
+            raise _map_openai_error(e) from e
 
         return self._parse_response(response)
 
@@ -116,7 +145,7 @@ class OpenAIProvider(BaseProvider):
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
         except Exception as e:
-            raise ProviderError(f"OpenAI streaming error: {e}") from e
+            raise _map_openai_error(e) from e
 
     def _convert_messages_openai(
         self, messages: list[Message]

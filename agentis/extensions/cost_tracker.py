@@ -54,6 +54,7 @@ class CostTracker:
         self._seen_tools: set[str] = set()
         self._stall_turns: int = 0
         self._should_force_conclude: bool = False
+        self._stall_fires: int = 0
 
     async def on_runtime_start(self, runtime: Any) -> None:
         """Called when the runtime starts."""
@@ -132,6 +133,7 @@ class CostTracker:
             "num_turns": len(self._records),
             "budget_usd": self._budget,
             "over_budget": self.is_over_budget(),
+            "stall_fires": self._stall_fires,
         }
 
     # ── Stall Detection ────────────────────────────────────
@@ -165,6 +167,8 @@ class CostTracker:
             self._stall_turns >= self._stall_turn_threshold
             and cost_so_far >= self._budget * self._stall_budget_fraction
         ):
+            if not self._should_force_conclude:
+                self._stall_fires += 1
             self._should_force_conclude = True
             logger.warning(
                 "Stall detected: %d turns without new tools, "

@@ -6,7 +6,13 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from agentis.errors import ConfigError, ProviderError
+from agentis.errors import (
+    AuthenticationError,
+    ConfigError,
+    ProviderError,
+    ProviderNetworkError,
+    RateLimitError,
+)
 from agentis.protocols import ProviderCapabilities, ToolSchema
 from agentis.providers.base import BaseProvider
 from agentis.types import Message, ProviderResponse, TokenUsage, ToolCall
@@ -21,12 +27,39 @@ except ImportError:
     _HAS_ANTHROPIC = False
 
 
+def _map_anthropic_error(exc: Exception) -> ProviderError:
+    """Map an anthropic SDK exception to the matching agentis error class.
+
+    Falls back to ``ProviderError`` for unrecognised exceptions so the caller
+    still sees a wrapped failure.
+    """
+    if not _HAS_ANTHROPIC:
+        return ProviderError(f"Anthropic API error: {exc}")
+    if isinstance(exc, anthropic.AuthenticationError):
+        return AuthenticationError(
+            "Authentication failed. Check your $ANTHROPIC_API_KEY "
+            "(run `agentis doctor` to verify)."
+        )
+    if isinstance(exc, anthropic.RateLimitError):
+        return RateLimitError(
+            "Anthropic rate limit hit. The SDK already retried with backoff; "
+            "reduce concurrency or wait before retrying."
+        )
+    if isinstance(exc, anthropic.APIConnectionError):
+        return ProviderNetworkError(
+            f"Network error reaching Anthropic: {exc}. Check connectivity."
+        )
+    return ProviderError(f"Anthropic API error: {exc}")
+
+
 class AnthropicProvider(BaseProvider):
     """Provider for Anthropic's Claude models.
 
     Supports prompt caching, tool use, and streaming.
     Requires the ``anthropic`` package: ``pip install agentis[anthropic]``
     """
+
+    ENV_KEY = "ANTHROPIC_API_KEY"
 
     def __init__(
         self,
@@ -86,7 +119,7 @@ class AnthropicProvider(BaseProvider):
         try:
             response = await self._client.messages.create(**kwargs)
         except Exception as e:
-            raise ProviderError(f"Anthropic API error: {e}") from e
+            raise _map_anthropic_error(e) from e
 
         return self._parse_response(response)
 
@@ -117,7 +150,7 @@ class AnthropicProvider(BaseProvider):
                 async for text in stream.text_stream:
                     yield text
         except Exception as e:
-            raise ProviderError(f"Anthropic streaming error: {e}") from e
+            raise _map_anthropic_error(e) from e
 
     def _prepare_messages(
         self, messages: list[Message]
