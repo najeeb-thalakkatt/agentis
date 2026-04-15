@@ -141,6 +141,24 @@ class TestCostStallDetection:
         tracker._record_turn_for_stall(tool_names=[], cost_so_far=0.75)
         assert tracker.should_force_conclude is True  # 3 stall turns + over 70%
 
+    def test_stall_fires_telemetry(self) -> None:
+        """get_report() exposes a stall_fires counter for observability."""
+        tracker = CostTracker(
+            budget_usd=1.0,
+            stall_turn_threshold=2,
+            stall_budget_fraction=0.5,
+        )
+        assert tracker.get_report()["stall_fires"] == 0
+
+        # Trigger one stall.
+        tracker._record_turn_for_stall(tool_names=["search"], cost_so_far=0.6)
+        tracker._record_turn_for_stall(tool_names=["search"], cost_so_far=0.7)
+        tracker._record_turn_for_stall(tool_names=["search"], cost_so_far=0.8)
+        assert tracker.get_report()["stall_fires"] == 1
+        # Consuming the flag should not double-count.
+        assert tracker.should_force_conclude is True
+        assert tracker.get_report()["stall_fires"] == 1
+
     def test_stall_triggered_with_repeated_tools(self) -> None:
         """Stall triggers when same tools keep being called without new ones."""
         tracker = CostTracker(
