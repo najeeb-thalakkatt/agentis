@@ -1,6 +1,6 @@
 [project]
 name = "agentis"
-version = "0.3.0"
+version = "1.0.0"
 description = "Production-grade, provider-agnostic Python framework for building agentic AI systems"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,7 +11,7 @@ authors = [
 ]
 keywords = ["agents", "llm", "ai", "agentic", "anthropic", "openai", "tools", "framework"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
